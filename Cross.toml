@@ -1,15 +1,8 @@
-[build]
-pre-build = [
-  "dpkg --add-architecture $CROSS_DEB_ARCH",
-  "apt-get update",
-  "apt-get install -y libwebkit2gtk-4.1-dev:$CROSS_DEB_ARCH libgtk-3-dev:$CROSS_DEB_ARCH libayatana-appindicator3-dev:$CROSS_DEB_ARCH librsvg2-dev:$CROSS_DEB_ARCH",
-]
-
 [target.aarch64-unknown-linux-gnu]
-image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:edge"
+dockerfile = "cross/Dockerfile.aarch64"
 
 [target.armv7-unknown-linux-gnueabihf]
-image = "ghcr.io/cross-rs/armv7-unknown-linux-gnueabihf:edge"
+dockerfile = "cross/Dockerfile.armv7hf"
 
 [target.x86_64-unknown-linux-gnu]
-image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:edge"
+dockerfile = "cross/Dockerfile.x86_64"
