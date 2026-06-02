@@ -6,31 +6,86 @@ on:
       - 'v*'
 
 jobs:
-  release:
+  build:
     permissions:
       contents: write
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: aarch64-unknown-linux-gnu
             name: rpi-infodisplay-aarch64
+            runner: ubuntu-latest
           - target: armv7-unknown-linux-gnueabihf
             name: rpi-infodisplay-armv7hf
+            runner: ubuntu-latest
           - target: x86_64-unknown-linux-gnu
             name: rpi-infodisplay-x86_64
+            runner: ubuntu-latest
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install cross
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Install cross-compilation toolchain (aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Install cross-compilation toolchain (armv7)
+        if: matrix.target == 'armv7-unknown-linux-gnueabihf'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabihf
+
+      - name: Install system deps (host + cross)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install cross sysroot deps (aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's/deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe" | sudo tee /etc/apt/sources.list.d/arm64.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev:arm64 \
+            libgtk-3-dev:arm64 \
+            libayatana-appindicator3-dev:arm64 \
+            librsvg2-dev:arm64
+
+      - name: Install cross sysroot deps (armv7)
+        if: matrix.target == 'armv7-unknown-linux-gnueabihf'
+        run: |
+          sudo dpkg --add-architecture armhf
+          sudo sed -i 's/deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
+          echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe" | sudo tee /etc/apt/sources.list.d/armhf.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev:armhf \
+            libgtk-3-dev:armhf \
+            libayatana-appindicator3-dev:armhf \
+            librsvg2-dev:armhf
 
       - name: Build
-        run: cross build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
+          PKG_CONFIG_PATH: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && '/usr/lib/aarch64-linux-gnu/pkgconfig' || matrix.target == 'armv7-unknown-linux-gnueabihf' && '/usr/lib/arm-linux-gnueabihf/pkgconfig' || '' }}
+          PKG_CONFIG_ALLOW_CROSS: 1
 
       - name: Rename binary
         run: |

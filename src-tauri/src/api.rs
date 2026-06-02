@@ -3,6 +3,16 @@ use reqwest::Client;
 use serde_json::Value;
 use std::time::Duration;
 
+fn http_client() -> Result<Client, Box<dyn std::error::Error + Send + Sync>> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("Accept-Encoding", "identity".parse().unwrap());
+    Client::builder()
+        .timeout(Duration::from_secs(30))
+        .default_headers(headers)
+        .build()
+        .map_err(Into::into)
+}
+
 /// Build the full API URL and return (full_url, pathname_for_signing)
 fn build_url(base_url: &str, api_path: &str) -> (String, String) {
     let base = base_url.trim_end_matches('/');
@@ -48,9 +58,7 @@ pub async fn announce(
 ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
     let (url, _) = build_url(controller_url, "/api/v1/kiosk/announce");
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()?;
+    let client = http_client()?;
 
     let body = serde_json::json!({
         "serial": serial,
@@ -79,9 +87,7 @@ pub async fn poll(
 ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
     let (url, pathname) = build_url(controller_url, &format!("/api/v1/kiosk/{}/poll", device_id));
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()?;
+    let client = http_client()?;
 
     let headers = build_auth_headers(private_key_pem, device_id, "GET", &pathname, "")?;
 
@@ -105,9 +111,7 @@ pub async fn heartbeat(
 ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
     let (url, pathname) = build_url(controller_url, &format!("/api/v1/kiosk/{}/heartbeat", device_id));
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()?;
+    let client = http_client()?;
 
     let body_str = serde_json::to_string(data)?;
     let headers = build_auth_headers(private_key_pem, device_id, "POST", &pathname, &body_str)?;
@@ -137,9 +141,7 @@ pub async fn ack_command(
         &format!("/api/v1/kiosk/{}/commands/{}/ack", device_id, command_id),
     );
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()?;
+    let client = http_client()?;
 
     let body = serde_json::json!({
         "status": status,
@@ -172,9 +174,7 @@ pub async fn upload_screenshot(
         &format!("/api/v1/kiosk/{}/screenshot", device_id),
     );
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
+    let client = http_client()?;
 
     // Encode PNG as base64 — server expects JSON { commandId, image: base64 }
     let base64_image = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, png_data);
@@ -186,7 +186,11 @@ pub async fn upload_screenshot(
 
     let headers = build_auth_headers(private_key_pem, device_id, "POST", &pathname, &body_str)?;
 
-    let resp = client.post(&url).headers(headers).body(body_str).send().await?;
+    let resp = client
+        .post(&url)
+        .headers(headers)
+        .body(body_str)
+        .send().await?;
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();
 
