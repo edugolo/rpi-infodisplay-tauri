@@ -6,7 +6,7 @@ on:
       - 'v*'
 
 jobs:
-  build:
+  build-arm:
     permissions:
       contents: write
     strategy:
@@ -15,30 +15,54 @@ jobs:
         include:
           - target: aarch64-unknown-linux-gnu
             name: rpi-infodisplay-aarch64
-            deb_arch: arm64
-            gcc_prefix: aarch64-linux-gnu
-            pkg_config_path: /usr/lib/aarch64-linux-gnu/pkgconfig
+            platform: linux/arm64
           - target: armv7-unknown-linux-gnueabihf
             name: rpi-infodisplay-armv7hf
-            deb_arch: armhf
-            gcc_prefix: arm-linux-gnueabihf
-            pkg_config_path: /usr/lib/arm-linux-gnueabihf/pkgconfig
-          - target: x86_64-unknown-linux-gnu
-            name: rpi-infodisplay-x86_64
-            deb_arch: amd64
-            gcc_prefix: ""
-            pkg_config_path: ""
+            platform: linux/arm/v7
 
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build in ARM container
+        run: |
+          docker buildx build \
+            --platform ${{ matrix.platform }} \
+            --build-arg TARGET=${{ matrix.target }} \
+            -o type=local,dest=./artifacts \
+            -f Dockerfile.build \
+            .
+        env:
+          DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
+
+      - name: Rename binary
+        run: |
+          cp artifacts/rpi-infodisplay ${{ matrix.name }}
+          chmod +x ${{ matrix.name }}
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.name }}
+          generate_release_notes: true
+
+  build-x86:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
-      - name: Install host dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -48,63 +72,16 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      - name: Install cross-compilation toolchain
-        if: matrix.deb_arch != 'amd64'
-        run: |
-          sudo apt-get install -y gcc-${{ matrix.gcc_prefix }}
-
-      - name: Add ARM architecture and install cross deps
-        if: matrix.deb_arch != 'amd64'
-        run: |
-          # Lock all existing repos to amd64 only (deb822 format)
-          sudo sed -i 's/^Architectures: amd64$/Architectures: amd64/' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
-          # Also handle traditional sources.list format
-          sudo sed -i 's/^deb http/deb [arch=amd64] http/g' /etc/apt/sources.list 2>/dev/null || true
-          sudo sed -i 's/^deb-src http/deb-src [arch=amd64] http/g' /etc/apt/sources.list 2>/dev/null || true
-          # For deb822 format, ensure Architectures is amd64 only
-          sudo sed -i '/^Architectures:/d' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
-          # Rewrite deb822 URIs to be amd64-only
-          sudo python3 -c "
-          import re
-          f = '/etc/apt/sources.list.d/ubuntu.sources'
-          try:
-              content = open(f).read()
-              # Add Architectures: amd64 to each stanza
-              content = re.sub(r'(Types:.*\n)', r'\1Architectures: amd64\n', content)
-              open(f,'w').write(content)
-          except: pass
-          "
-
-          # Add ports repo for the target arch
-          echo "Types: deb
-          URIs: http://ports.ubuntu.com/ubuntu-ports
-          Suites: noble noble-updates noble-backports
-          Components: main restricted universe
-          Architectures: ${{ matrix.deb_arch }}
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg" | sudo tee /etc/apt/sources.list.d/${{ matrix.deb_arch }}.sources
-
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev:${{ matrix.deb_arch }} \
-            libgtk-3-dev:${{ matrix.deb_arch }} \
-            libayatana-appindicator3-dev:${{ matrix.deb_arch }} \
-            librsvg2-dev:${{ matrix.deb_arch }}
-
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
-          PKG_CONFIG_PATH: ${{ matrix.pkg_config_path }}
-          PKG_CONFIG_ALLOW_CROSS: ${{ matrix.deb_arch != 'amd64' }}
+        run: cargo build --release
 
       - name: Rename binary
         run: |
-          cp target/${{ matrix.target }}/release/rpi-infodisplay ${{ matrix.name }}
-          chmod +x ${{ matrix.name }}
+          cp target/release/rpi-infodisplay rpi-infodisplay-x86_64
+          chmod +x rpi-infodisplay-x86_64
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.name }}
+          files: rpi-infodisplay-x86_64
           generate_release_notes: true
