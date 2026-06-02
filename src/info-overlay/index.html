@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Device Info</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #000;
+      font-family: 'DejaVu Sans', Arial, sans-serif;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      padding: 40px;
+      overflow: hidden;
+    }
+    h1 {
+      font-size: 48px;
+      margin-bottom: 24px;
+      color: #4fc3f7;
+    }
+    .ip {
+      font-size: 120px;
+      font-weight: bold;
+      margin-bottom: 24px;
+      color: #81c784;
+    }
+    .info {
+      font-family: monospace;
+      font-size: 24px;
+      color: #aaa;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <h1>🖥️ Device Info</h1>
+  <div class="ip" id="ipAddress">Loading...</div>
+  <pre class="info" id="info"></pre>
+
+  <script>
+    // Device info is injected via window.__DEVICE_INFO__ by the Rust code
+    // Falls back to placeholder if not yet available
+    function render() {
+      const data = window.__DEVICE_INFO__;
+      if (!data) {
+        document.getElementById('ipAddress').textContent = 'Loading...';
+        setTimeout(render, 200);
+        return;
+      }
+      const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+      const ip = parsed?.device?.ip || parsed?.device?.system?.defaultNetworkInterface?.ip4 || 'No IP';
+      document.getElementById('ipAddress').textContent = ip;
+      document.getElementById('info').textContent = JSON.stringify(parsed, null, 2);
+    }
+    render();
+  </script>
+</body>
+</html>

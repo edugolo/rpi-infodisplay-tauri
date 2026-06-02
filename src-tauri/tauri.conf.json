@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
+  "productName": "rpi-infodisplay",
+  "version": "2.0.0",
+  "identifier": "be.edugo.rpi-infodisplay",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  }
+}

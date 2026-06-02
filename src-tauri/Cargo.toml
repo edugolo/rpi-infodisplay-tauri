@@ -1,0 +1,29 @@
+[package]
+name = "rpi-infodisplay"
+version = "2.0.0"
+description = "Raspberry Pi kiosk display application (Tauri v2)"
+authors = ["Edugo Scholengroep"]
+edition = "2021"
+license = "MIT"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "multipart"] }
+rust_socketio = "0.6"
+ed25519-dalek = { version = "2", features = ["pem", "rand_core"] }
+pkcs8 = { version = "0.10", features = ["pem"] }
+rand = "0.8"
+base64 = "0.22"
+image = "0.25"
+log = "0.4"
+env_logger = "0.11"
+dirs = "5"
+chrono = "0.4"
+url = "2"
