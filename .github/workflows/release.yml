@@ -6,10 +6,19 @@ on:
       - 'v*'
 
 jobs:
-  build-x86:
+  build:
     permissions:
       contents: write
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: rpi-infodisplay-aarch64
+            runner: ubuntu-24.04-arm
+          - name: rpi-infodisplay-x86_64
+            runner: ubuntu-latest
+
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
