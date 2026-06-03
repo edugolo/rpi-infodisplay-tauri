@@ -43,7 +43,8 @@ fi
 # ── Defaults ─────────────────────────────────────────────────────────────────
 GITHUB_REPO="edugolo/rpi-infodisplay-tauri"
 INSTALL_DIR="/opt/rpi-infodisplay"
-KIOSK_USER="pi"
+# Default to the user that invoked sudo (or 'pi' if SUDO_USER is empty)
+KIOSK_USER="${SUDO_USER:-pi}"
 VERSION=""
 BINARY_SOURCE=""
 CONFIG_B64=""
