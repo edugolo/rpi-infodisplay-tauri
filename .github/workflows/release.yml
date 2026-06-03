@@ -38,8 +38,16 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      - name: Rename binary
+        run: |
+          if [[ "${{ matrix.runner }}" == "ubuntu-24.04-arm" ]]; then
+            cp target/release/rpi-infodisplay target/release/rpi-infodisplay-aarch64
+          else
+            cp target/release/rpi-infodisplay target/release/rpi-infodisplay-x86_64
+          fi
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: target/release/rpi-infodisplay
+          files: target/release/rpi-infodisplay-*
           generate_release_notes: true

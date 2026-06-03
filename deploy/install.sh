@@ -117,7 +117,7 @@ elif [[ -n "${VERSION}" ]]; then
     # Determine the correct binary name for this architecture
     ARCH=$(uname -m)
     if [[ "${ARCH}" == "aarch64" ]]; then
-        BINARY_NAME="rpi-infodisplay"
+        BINARY_NAME="rpi-infodisplay-aarch64"
     else
         BINARY_NAME="rpi-infodisplay-x86_64"
     fi
