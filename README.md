@@ -24,14 +24,25 @@ sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev
 
 ### Raspberry Pi OS Lite (target)
 ```bash
-# Minimal X11 + WebKitGTK
+# Minimal X11 + WebKitGTK + screenshot tools + display control
 sudo apt install --no-install-recommends \
-  xorg xserver-xorg-video-all \
+  xorg xserver-xorg-video-all xinit \
   libwebkit2gtk-4.1-0 libgtk-3-0 \
   libgdk-pixbuf2.0-0 libpango-1.0-0 libcairo2 \
   libglib2.0-0 libayatana-appindicator3-1 \
-  librsvg2-common fonts-dejavu-core scrot
+  librsvg2-common fonts-dejavu-core \
+  scrot imagemagick \
+  cec-utils curl ca-certificates
 ```
+
+| Package | Why |
+|---|---|
+| `xorg`, `xserver-xorg-video-all`, `xinit` | X11 server (Pi OS Lite has no desktop) |
+| `libwebkit2gtk-4.1-0` | WebKit rendering engine (Tauri runtime) |
+| `libgtk-3-0` | GTK3 (Tauri runtime) |
+| `scrot` | Primary screenshot tool (X11, reliable on Pi) |
+| `imagemagick` | Fallback screenshot (`import -window root`) |
+| `cec-utils` | HDMI CEC control (turn TV on/off via `cec-client`) |
 
 ## Build
 
@@ -57,9 +68,28 @@ Create `config.json` in the working directory:
   "url": "https://edugo.be",
   "fullscreen": true,
   "frame": false,
-  "zoomFactor": 1.0
+  "zoomFactor": 1.0,
+  "displaySchedule": {
+    "enabled": true,
+    "on": "07:00",
+    "off": "22:00",
+    "days": ["mon", "tue", "wed", "thu", "fri"]
+  }
 }
 ```
+
+### Display Schedule
+
+The `displaySchedule` section controls automatic power on/off of the connected display:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | `bool` | Enable or disable the schedule |
+| `on` | `string` | Time to power on (HH:MM, 24h format) |
+| `off` | `string` | Time to power off (HH:MM, 24h format) |
+| `days` | `string[]` | Days to apply (e.g. `["mon","fri"]`). Empty = every day |
+
+Power-off uses **CEC** (via `cec-client`) first; if that fails it falls back to **HDMI** power control (`vcgencmd display_power`). This requires `cec-client` (from `libcec-dev`) to be installed for CEC, and `vcgencmd` (present on Raspberry Pi OS) for the HDMI fallback.
 
 ## Key Storage
 
@@ -70,12 +100,38 @@ Keys and device ID are stored in `~/.config/rpi-infodisplay/`:
 
 ## Deployment
 
-```bash
-# Copy binary to Pi
-scp target/aarch64-unknown-linux-gnu/release/rpi-infodisplay pi@kiosk.local:~/
+### One-liner from your PC (recommended)
 
-# Restart service
-ssh pi@kiosk.local "sudo systemctl restart kiosk-display"
+Downloads the binary from GitHub Releases, installs everything, no files to copy:
+
+```bash
+# Install a specific version
+ssh pi@kiosk.local 'curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --version v0.0.1'
+
+# Or install the latest release
+ssh pi@kiosk.local 'curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest'
+
+# With a config (base64-encoded to survive SSH quoting):
+## bash
+ssh pi@kiosk.local "curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest --config-base64 $(cat config.json | base64 -w0)"
+## fish
+ssh pi@kiosk.local "curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest --config-base64 "(cat config.json | base64)
+
+# Then reboot
+ssh pi@kiosk.local 'sudo reboot'
+```
+
+The script installs all system deps (X11, WebKitGTK, screenshot tools, CEC),
+downloads the binary, sets up the systemd service, and configures auto-login
++ X11 auto-start — all in one go.
+
+### Managing the service
+
+```bash
+ssh pi@kiosk.local 'sudo systemctl status rpi-infodisplay'     # check status
+ssh pi@kiosk.local 'journalctl -u rpi-infodisplay -f'           # follow logs
+ssh pi@kiosk.local 'sudo systemctl restart rpi-infodisplay'     # restart
+ssh pi@kiosk.local 'sudo systemctl stop rpi-infodisplay'        # stop
 ```
 
 ## License

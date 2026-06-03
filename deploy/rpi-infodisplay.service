@@ -1,0 +1,26 @@
+[Unit]
+Description=Edugo Kiosk Display (Tauri)
+After=graphical.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+WorkingDirectory=/opt/rpi-infodisplay
+ExecStartPre=/bin/sleep 3
+ExecStart=/opt/rpi-infodisplay/rpi-infodisplay
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kiosk-display
+
+# Hardening (kiosk runs as unprivileged user)
+NoNewPrivileges=false
+ProtectSystem=false
+ProtectHome=false
+
+[Install]
+WantedBy=graphical.target
