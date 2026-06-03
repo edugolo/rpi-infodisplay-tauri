@@ -105,17 +105,15 @@ Keys and device ID are stored in `~/.config/rpi-infodisplay/`:
 Downloads the binary from GitHub Releases, installs everything, no files to copy:
 
 ```bash
-# Install a specific version
-ssh pi@kiosk.local 'curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --version v0.0.1'
-
-# Or install the latest release
+# Minimal — reuses existing config (or defaults) on the Pi:
 ssh pi@kiosk.local 'curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest'
 
-# With a config (base64-encoded to survive SSH quoting):
-## bash
-ssh pi@kiosk.local "curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest --config-base64 $(cat config.json | base64 -w0)"
-## fish
-ssh pi@kiosk.local "curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest --config-base64 "(cat config.json | base64)
+# With config values via env vars:
+NAME="Hall A" LOCATION="Floor 1" CONTROLLER="https://controller.example.com/tenant" URL="https://edugo.be" \
+  ssh pi@kiosk.local 'curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest'
+
+# Or a specific version:
+ssh pi@kiosk.local 'curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --version v0.0.1'
 
 # Then reboot
 ssh pi@kiosk.local 'sudo reboot'

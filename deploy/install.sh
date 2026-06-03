@@ -180,7 +180,15 @@ if [[ -n "${CONFIG_B64}" ]]; then
     chown "${KIOSK_USER}:${KIOSK_USER}" "${INSTALL_DIR}/config.json"
     ok "Config installed (from --config-base64)"
 else
-    # Load existing config values as defaults (if any)
+    # Config values come from (in priority order):
+    #   1. Environment variables: NAME, LOCATION, CONTROLLER, URL
+    #   2. Existing config.json on disk
+    #   3. Empty / defaults
+    #
+    # Usage over SSH:
+    #   NAME="Hall A" LOCATION="Floor 1" CONTROLLER="https://..." URL="https://edugo.be" \
+    #     cat install.sh | ssh pi@host 'sudo bash -s -- --latest'
+    #
     EXISTING_CONFIG="${INSTALL_DIR}/config.json"
     DEFAULT_NAME=""
     DEFAULT_LOCATION=""
@@ -194,30 +202,13 @@ else
         DEFAULT_URL=$(python3 -c "import json; d=json.load(open('${EXISTING_CONFIG}')); print(d.get('url','https://edugo.be'))" 2>/dev/null || true)
     fi
 
-    echo ""
-    echo -e "${BLUE}┌──────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${BLUE}│  Display Configuration                                       │${NC}"
-    echo -e "${BLUE}└──────────────────────────────────────────────────────────────┘${NC}"
-    echo ""
+    # Env vars override everything; existing config is the fallback
+    CONF_NAME="${NAME:-${DEFAULT_NAME}}"
+    CONF_LOCATION="${LOCATION:-${DEFAULT_LOCATION}}"
+    CONF_CONTROLLER="${CONTROLLER:-${DEFAULT_CONTROLLER}}"
+    CONF_URL="${URL:-${DEFAULT_URL}}"
 
-    # Helper: prompt with default
-    prompt() {
-        local label="$1" var="$2" default="$3"
-        if [[ -n "${default}" ]]; then
-            printf "  %-15s [%s]: " "${label}" "${default}"
-        else
-            printf "  %-15s: " "${label}"
-        fi
-        read -r input
-        eval "${var}=\"${input:-${default}}\""
-    }
-
-    prompt "Display name" CONF_NAME "${DEFAULT_NAME}"
-    prompt "Location" CONF_LOCATION "${DEFAULT_LOCATION}"
-    prompt "Controller URL" CONF_CONTROLLER "${DEFAULT_CONTROLLER}"
-    prompt "Start URL" CONF_URL "${DEFAULT_URL}"
-
-    echo ""
+    info "Config: name='${CONF_NAME}' location='${CONF_LOCATION}' controller='${CONF_CONTROLLER}' url='${CONF_URL}'"
 
     cat > "${INSTALL_DIR}/config.json" << CONFEOF
 {
