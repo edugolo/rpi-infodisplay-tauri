@@ -95,9 +95,8 @@ async fn main() {
                                 if dims[i] == "current" && i + 3 < dims.len() {
                                     if let (Ok(w), Ok(h)) = (dims[i+1].parse::<u32>(), dims[i+3].parse::<u32>()) {
                                         log::info!("[kiosk] Setting window to {}x{} (bare X fullscreen)", w, h);
-                                        use tauri::PhysicalSize;
-                                        builder = builder.inner_size(PhysicalSize::new(w, h));
-                                        builder = builder.position(tauri::Position::Physical(tauri::PhysicalPosition::new(0, 0)));
+                                        builder = builder.inner_size(w as f64, h as f64);
+                                        builder = builder.position(0.0, 0.0);
                                     }
                                     break;
                                 }
