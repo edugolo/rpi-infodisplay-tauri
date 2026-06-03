@@ -179,23 +179,59 @@ if [[ -n "${CONFIG_B64}" ]]; then
     echo "${CONFIG_B64}" | base64 -d > "${INSTALL_DIR}/config.json"
     chown "${KIOSK_USER}:${KIOSK_USER}" "${INSTALL_DIR}/config.json"
     ok "Config installed (from --config-base64)"
-elif [[ -f "${INSTALL_DIR}/config.json" ]]; then
-    ok "Existing config.json preserved."
 else
-    cat > "${INSTALL_DIR}/config.json" << 'EOF'
+    # Load existing config values as defaults (if any)
+    EXISTING_CONFIG="${INSTALL_DIR}/config.json"
+    DEFAULT_NAME=""
+    DEFAULT_LOCATION=""
+    DEFAULT_CONTROLLER=""
+    DEFAULT_URL="https://edugo.be"
+
+    if [[ -f "${EXISTING_CONFIG}" ]] && command -v python3 &>/dev/null; then
+        DEFAULT_NAME=$(python3 -c "import json; d=json.load(open('${EXISTING_CONFIG}')); print(d.get('name',''))" 2>/dev/null || true)
+        DEFAULT_LOCATION=$(python3 -c "import json; d=json.load(open('${EXISTING_CONFIG}')); print(d.get('location',''))" 2>/dev/null || true)
+        DEFAULT_CONTROLLER=$(python3 -c "import json; d=json.load(open('${EXISTING_CONFIG}')); print(d.get('controller',''))" 2>/dev/null || true)
+        DEFAULT_URL=$(python3 -c "import json; d=json.load(open('${EXISTING_CONFIG}')); print(d.get('url','https://edugo.be'))" 2>/dev/null || true)
+    fi
+
+    echo ""
+    echo -e "${BLUE}┌──────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${BLUE}│  Display Configuration                                       │${NC}"
+    echo -e "${BLUE}└──────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+
+    # Helper: prompt with default
+    prompt() {
+        local label="$1" var="$2" default="$3"
+        if [[ -n "${default}" ]]; then
+            printf "  %-15s [%s]: " "${label}" "${default}"
+        else
+            printf "  %-15s: " "${label}"
+        fi
+        read -r input
+        eval "${var}=\"${input:-${default}}\""
+    }
+
+    prompt "Display name" CONF_NAME "${DEFAULT_NAME}"
+    prompt "Location" CONF_LOCATION "${DEFAULT_LOCATION}"
+    prompt "Controller URL" CONF_CONTROLLER "${DEFAULT_CONTROLLER}"
+    prompt "Start URL" CONF_URL "${DEFAULT_URL}"
+
+    echo ""
+
+    cat > "${INSTALL_DIR}/config.json" << CONFEOF
 {
-  "name": "",
-  "location": "",
-  "controller": "",
-  "url": "https://edugo.be",
+  "name": "${CONF_NAME}",
+  "location": "${CONF_LOCATION}",
+  "controller": "${CONF_CONTROLLER}",
+  "url": "${CONF_URL}",
   "fullscreen": true,
   "frame": false,
   "zoomFactor": 1.0
 }
-EOF
+CONFEOF
     chown "${KIOSK_USER}:${KIOSK_USER}" "${INSTALL_DIR}/config.json"
-    warn "No config provided — wrote default. Edit it:"
-    warn "  sudo nano ${INSTALL_DIR}/config.json"
+    ok "Config written to ${INSTALL_DIR}/config.json"
 fi
 
 # ── Step 4: Systemd service ─────────────────────────────────────────────────
