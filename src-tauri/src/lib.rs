@@ -1,6 +1,7 @@
 pub mod api;
 pub mod commands;
 pub mod config;
+pub mod display;
 pub mod heartbeat;
 pub mod info_overlay;
 pub mod keys;

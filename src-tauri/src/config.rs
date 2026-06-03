@@ -16,6 +16,22 @@ pub struct AppConfig {
     pub frame: Option<bool>,
     pub zoom_factor: Option<f64>,
     pub refresh_cron_expression: Option<String>,
+    pub display_schedule: Option<DisplaySchedule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisplaySchedule {
+    /// Whether the schedule is active
+    #[serde(default)]
+    pub enabled: bool,
+    /// Time to turn the display on (HH:MM format, 24h)
+    pub on: Option<String>,
+    /// Time to turn the display off (HH:MM format, 24h)
+    pub off: Option<String>,
+    /// Days of week to apply the schedule (e.g. ["mon", "tue", "wed", "thu", "fri"])
+    /// If empty or absent, applies every day.
+    #[serde(default)]
+    pub days: Vec<String>,
 }
 
 impl AppConfig {
@@ -121,6 +137,16 @@ impl AppConfig {
                         if self.refresh_cron_expression != new_val {
                             self.refresh_cron_expression = new_val;
                             changed = true;
+                        }
+                    }
+                    "displaySchedule" => {
+                        if let Ok(new_val) =
+                            serde_json::from_value::<DisplaySchedule>(value.clone())
+                        {
+                            if self.display_schedule.as_ref() != Some(&new_val) {
+                                self.display_schedule = Some(new_val);
+                                changed = true;
+                            }
                         }
                     }
                     _ => {} // ignore unknown fields
