@@ -105,15 +105,11 @@ Keys and device ID are stored in `~/.config/rpi-infodisplay/`:
 Downloads the binary from GitHub Releases, installs everything, no files to copy:
 
 ```bash
-# Minimal — reuses existing config (or defaults) on the Pi:
+# Minimal — reuses existing config on the Pi:
 ssh pi@kiosk.local 'curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest'
 
-# With config values via env vars:
-NAME="Hall A" LOCATION="Floor 1" CONTROLLER="https://controller.example.com/tenant" URL="https://edugo.be" \
-  ssh pi@kiosk.local 'curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest'
-
-# Or a specific version:
-ssh pi@kiosk.local 'curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --version v0.0.1'
+# With config values:
+ssh pi@kiosk.local 'curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest --name "Hall A" --location "Floor 1" --controller "https://controller.example.com/tenant"'
 
 # Then reboot
 ssh pi@kiosk.local 'sudo reboot'

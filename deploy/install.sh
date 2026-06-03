@@ -4,16 +4,11 @@
 #
 # Usage (from your PC, one-liner over SSH):
 #
-#   ssh pi@kiosk.local 'curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --version v0.0.1'
+#   ssh pi@kiosk.local 'curl -fsSL RAW_URL | sudo bash -s -- --latest'
 #
-#   # Or with a config:
-#   ssh pi@kiosk.local 'curl -fsSL ... | sudo bash -s -- --version v0.0.1 --config-base64 BASE64ENCODEDCONFIG'
-#
-#   # Or the latest release:
-#   ssh pi@kiosk.local 'curl -fsSL ... | sudo bash -s -- --latest'
-#
-#   # Or if you already have the script on the Pi:
-#   sudo bash install.sh --version v0.0.1
+#   # With config:
+#   ssh pi@kiosk.local 'curl -fsSL RAW_URL | sudo bash -s -- --latest \
+#       --name "Hall A" --location "Floor 1" --controller "https://ctrl.example.com"'
 #
 set -euo pipefail
 
@@ -30,10 +25,7 @@ ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
 err()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 # ── Pre-flight ───────────────────────────────────────────────────────────────
-# If not root, save self to a temp file and re-exec with sudo.
-# This allows piping over SSH: cat install.sh | ssh pi@host 'bash -s -- --latest'
 if [[ $EUID -ne 0 ]]; then
-    # We're being piped — save to temp and re-exec
     TMPFILE=$(mktemp /tmp/rpi-infodisplay-install.XXXXXX.sh)
     cat > "$TMPFILE"
     chmod +x "$TMPFILE"
@@ -43,51 +35,41 @@ fi
 # ── Defaults ─────────────────────────────────────────────────────────────────
 GITHUB_REPO="edugolo/rpi-infodisplay-tauri"
 INSTALL_DIR="/opt/rpi-infodisplay"
-# Default to the user that invoked sudo (or 'pi' if SUDO_USER is empty)
 KIOSK_USER="${SUDO_USER:-pi}"
 VERSION=""
 BINARY_SOURCE=""
-CONFIG_B64=""
+CONF_NAME=""
+CONF_LOCATION=""
+CONF_CONTROLLER=""
+CONF_URL=""
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --version|-v)
-            VERSION="$2"; shift 2 ;;
-        --latest)
-            VERSION="latest"; shift ;;
-        --binary)
-            BINARY_SOURCE="$2"; shift 2 ;;
-        --dir)
-            INSTALL_DIR="$2"; shift 2 ;;
-        --user)
-            KIOSK_USER="$2"; shift 2 ;;
-        --config-base64)
-            # Pass config.json as base64 to avoid quoting hell over SSH:
-            #   --config-base64 $(cat config.json | base64 -w0)
-            CONFIG_B64="$2"; shift 2 ;;
+        --version|-v)    VERSION="$2"; shift 2 ;;
+        --latest)        VERSION="latest"; shift ;;
+        --binary)        BINARY_SOURCE="$2"; shift 2 ;;
+        --dir)           INSTALL_DIR="$2"; shift 2 ;;
+        --user)          KIOSK_USER="$2"; shift 2 ;;
+        --name)          CONF_NAME="$2"; shift 2 ;;
+        --location)      CONF_LOCATION="$2"; shift 2 ;;
+        --controller)    CONF_CONTROLLER="$2"; shift 2 ;;
+        --url)           CONF_URL="$2"; shift 2 ;;
         -h|--help)
             echo "Usage: sudo bash install.sh [OPTIONS]"
             echo ""
-            echo "Options:"
-            echo "  --version TAG      Download binary from GitHub release tag (e.g. v0.0.1)"
-            echo "  --latest           Download binary from the latest GitHub release"
-            echo "  --binary PATH      Use a local binary instead of downloading"
-            echo "  --dir DIR          Installation directory (default: /opt/rpi-infodisplay)"
-            echo "  --user USER        User to run the service as (default: pi)"
-            echo "  --config-base64 B  Base64-encoded config.json"
-            echo "  -h, --help         Show this help"
-            echo ""
-            echo "Examples:"
-            echo "  sudo bash install.sh --version v0.0.1"
-            echo "  sudo bash install.sh --latest --config-base64 \$(cat config.json | base64 -w0)"
-            echo ""
-            echo "Remote one-liner from your PC:"
-            echo "  ssh pi@kiosk.local 'curl -fsSL RAW_URL | sudo bash -s -- --version v0.0.1'"
+            echo "  --version TAG      Download from GitHub release tag"
+            echo "  --latest           Download from the latest GitHub release"
+            echo "  --binary PATH      Use a local binary"
+            echo "  --name NAME        Display name"
+            echo "  --location LOC     Display location"
+            echo "  --controller URL   Controller URL"
+            echo "  --url URL          Start URL (default: https://edugo.be)"
+            echo "  --dir DIR          Install dir (default: /opt/rpi-infodisplay)"
+            echo "  --user USER        Service user (default: current user)"
             exit 0
             ;;
-        *)
-            err "Unknown option: $1"; exit 1 ;;
+        *) err "Unknown option: $1"; exit 1 ;;
     esac
 done
 
@@ -125,7 +107,6 @@ ok "System dependencies installed."
 mkdir -p "${INSTALL_DIR}"
 
 if [[ -n "${BINARY_SOURCE}" ]]; then
-    # ── Local file ────────────────────────────────────────────────
     if [[ ! -f "${BINARY_SOURCE}" ]]; then
         err "Binary not found: ${BINARY_SOURCE}"; exit 1
     fi
@@ -133,23 +114,19 @@ if [[ -n "${BINARY_SOURCE}" ]]; then
     ok "Binary copied from ${BINARY_SOURCE}"
 
 elif [[ -n "${VERSION}" ]]; then
-    # ── Download from GitHub Releases ─────────────────────────────
     if [[ "${VERSION}" == "latest" ]]; then
         info "Looking up latest release..."
         RELEASE_URL=$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
             | grep -oP '"browser_download_url":\s*"\K[^"]*rpi-infodisplay"' \
             | head -1 | tr -d '"')
         if [[ -z "${RELEASE_URL}" ]]; then
-            # Fallback: just grab the first asset
             RELEASE_URL=$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
                 | grep -oP '"browser_download_url":\s*"\K[^"]+' \
                 | head -1)
         fi
     else
-        # Determine arch-appropriate binary name
         ARCH=$(uname -m)
         if [[ "${ARCH}" == "aarch64" ]]; then
-            # The default (arm) binary
             RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/rpi-infodisplay"
         else
             RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/rpi-infodisplay-x86_64"
@@ -160,13 +137,13 @@ elif [[ -n "${VERSION}" ]]; then
     HTTP_CODE=$(curl -fsSL -w '%{http_code}' -o "${INSTALL_DIR}/rpi-infodisplay" "${RELEASE_URL}" || true)
     if [[ "${HTTP_CODE}" != "200" ]]; then
         err "Download failed (HTTP ${HTTP_CODE}). URL: ${RELEASE_URL}"
-        err "Check available releases at: https://github.com/${GITHUB_REPO}/releases"
+        err "Check: https://github.com/${GITHUB_REPO}/releases"
         exit 1
     fi
     ok "Binary downloaded"
 
 else
-    err "No binary source specified. Use --version TAG, --latest, or --binary PATH"
+    err "No binary source. Use --latest, --version TAG, or --binary PATH"
     exit 1
 fi
 
@@ -175,42 +152,20 @@ chown -R "${KIOSK_USER}:${KIOSK_USER}" "${INSTALL_DIR}"
 ok "Binary installed: ${INSTALL_DIR}/rpi-infodisplay ($(du -h "${INSTALL_DIR}/rpi-infodisplay" | cut -f1))"
 
 # ── Step 3: Config ───────────────────────────────────────────────────────────
-if [[ -n "${CONFIG_B64}" ]]; then
-    echo "${CONFIG_B64}" | base64 -d > "${INSTALL_DIR}/config.json"
-    chown "${KIOSK_USER}:${KIOSK_USER}" "${INSTALL_DIR}/config.json"
-    ok "Config installed (from --config-base64)"
-else
-    # Config values come from (in priority order):
-    #   1. Environment variables: NAME, LOCATION, CONTROLLER, URL
-    #   2. Existing config.json on disk
-    #   3. Empty / defaults
-    #
-    # Usage over SSH:
-    #   NAME="Hall A" LOCATION="Floor 1" CONTROLLER="https://..." URL="https://edugo.be" \
-    #     cat install.sh | ssh pi@host 'sudo bash -s -- --latest'
-    #
-    EXISTING_CONFIG="${INSTALL_DIR}/config.json"
-    DEFAULT_NAME=""
-    DEFAULT_LOCATION=""
-    DEFAULT_CONTROLLER=""
-    DEFAULT_URL="https://edugo.be"
+# Priority: CLI flags → existing config.json → defaults
+EXISTING_CONFIG="${INSTALL_DIR}/config.json"
 
-    if [[ -f "${EXISTING_CONFIG}" ]] && command -v python3 &>/dev/null; then
-        DEFAULT_NAME=$(python3 -c "import json; d=json.load(open('${EXISTING_CONFIG}')); print(d.get('name',''))" 2>/dev/null || true)
-        DEFAULT_LOCATION=$(python3 -c "import json; d=json.load(open('${EXISTING_CONFIG}')); print(d.get('location',''))" 2>/dev/null || true)
-        DEFAULT_CONTROLLER=$(python3 -c "import json; d=json.load(open('${EXISTING_CONFIG}')); print(d.get('controller',''))" 2>/dev/null || true)
-        DEFAULT_URL=$(python3 -c "import json; d=json.load(open('${EXISTING_CONFIG}')); print(d.get('url','https://edugo.be'))" 2>/dev/null || true)
-    fi
+if [[ -f "${EXISTING_CONFIG}" ]] && command -v python3 &>/dev/null; then
+    [[ -z "${CONF_NAME}" ]]       && CONF_NAME=$(python3 -c "import json; d=json.load(open('${EXISTING_CONFIG}')); print(d.get('name',''))" 2>/dev/null || true)
+    [[ -z "${CONF_LOCATION}" ]]   && CONF_LOCATION=$(python3 -c "import json; d=json.load(open('${EXISTING_CONFIG}')); print(d.get('location',''))" 2>/dev/null || true)
+    [[ -z "${CONF_CONTROLLER}" ]] && CONF_CONTROLLER=$(python3 -c "import json; d=json.load(open('${EXISTING_CONFIG}')); print(d.get('controller',''))" 2>/dev/null || true)
+    [[ -z "${CONF_URL}" ]]        && CONF_URL=$(python3 -c "import json; d=json.load(open('${EXISTING_CONFIG}')); print(d.get('url',''))" 2>/dev/null || true)
+fi
+CONF_URL="${CONF_URL:-https://edugo.be}"
 
-    # Env vars override everything; existing config is the fallback
-    CONF_NAME="${NAME:-${DEFAULT_NAME}}"
-    CONF_LOCATION="${LOCATION:-${DEFAULT_LOCATION}}"
-    CONF_CONTROLLER="${CONTROLLER:-${DEFAULT_CONTROLLER}}"
-    CONF_URL="${URL:-${DEFAULT_URL}}"
+info "Config: name='${CONF_NAME}' location='${CONF_LOCATION}' controller='${CONF_CONTROLLER}' url='${CONF_URL}'"
 
-    info "Config: name='${CONF_NAME}' location='${CONF_LOCATION}' controller='${CONF_CONTROLLER}' url='${CONF_URL}'"
-
-    cat > "${INSTALL_DIR}/config.json" << CONFEOF
+cat > "${INSTALL_DIR}/config.json" << CONFEOF
 {
   "name": "${CONF_NAME}",
   "location": "${CONF_LOCATION}",
@@ -221,9 +176,8 @@ else
   "zoomFactor": 1.0
 }
 CONFEOF
-    chown "${KIOSK_USER}:${KIOSK_USER}" "${INSTALL_DIR}/config.json"
-    ok "Config written to ${INSTALL_DIR}/config.json"
-fi
+chown "${KIOSK_USER}:${KIOSK_USER}" "${INSTALL_DIR}/config.json"
+ok "Config written to ${INSTALL_DIR}/config.json"
 
 # ── Step 4: Systemd service ─────────────────────────────────────────────────
 info "Installing systemd service..."
@@ -257,7 +211,6 @@ ok "Systemd service installed."
 # ── Step 5: Auto-login + X11 auto-start (Pi OS Lite) ────────────────────────
 info "Configuring auto-login and X11..."
 
-# Auto-login on tty1
 if command -v raspi-config &>/dev/null; then
     raspi-config nonint do_boot_behaviour B2 2>/dev/null || true
 else
@@ -270,7 +223,6 @@ EOF
 fi
 ok "Auto-login configured"
 
-# .xinitrc — disable screensaver/blanking, run the binary
 XINITRC="/home/${KIOSK_USER}/.xinitrc"
 cat > "${XINITRC}" << 'XEOF'
 #!/bin/bash
@@ -282,7 +234,6 @@ XEOF
 chown "${KIOSK_USER}:${KIOSK_USER}" "${XINITRC}"
 chmod +x "${XINITRC}"
 
-# Auto-start X on tty1 login (only if not already there)
 PROFILE="/home/${KIOSK_USER}/.profile"
 if ! grep -q "startx" "${PROFILE}" 2>/dev/null; then
     cat >> "${PROFILE}" << 'PEOF'
