@@ -1,6 +1,7 @@
 use rpi_infodisplay::api;
 use rpi_infodisplay::commands::CommandDispatcher;
 use rpi_infodisplay::config::AppConfig;
+use rpi_infodisplay::display;
 use rpi_infodisplay::heartbeat::Heartbeat;
 use rpi_infodisplay::keys;
 use rpi_infodisplay::poller::Poller;
@@ -34,6 +35,7 @@ async fn main() {
             frame: None,
             zoom_factor: None,
             refresh_cron_expression: None,
+            display_schedule: None,
         }
     });
 
@@ -69,15 +71,44 @@ async fn main() {
             let url = app_config.url.clone().unwrap_or_else(|| "https://edugo.be".to_string());
             let zoom_factor = app_config.zoom_factor.unwrap_or(1.0);
 
-            let main_window = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::External(url.parse().unwrap()))
+            let mut builder = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::External(url.parse().unwrap()))
                 .fullscreen(fullscreen)
                 .decorations(decorations)
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .visible(true)
-                .background_color(tauri::webview::Color(0, 0, 0, 255))
-                .build()
-                .expect("Failed to create main window");
+                .background_color(tauri::webview::Color(0, 0, 0, 255));
+
+            // On bare X (no window manager), fullscreen hints don't work.
+            // Set inner size to screen dimensions as a fallback.
+            if fullscreen {
+                if let Ok(output) = std::process::Command::new("xrandr")
+                    .arg("--current")
+                    .output()
+                {
+                    let xrandr_out = String::from_utf8_lossy(&output.stdout);
+                    for line in xrandr_out.lines() {
+                        if line.contains("current") {
+                            // e.g. "Screen 0: minimum 320 x 200, current 1920 x 1080, maximum ..."
+                            let dims: Vec<&str> = line.split_whitespace().collect();
+                            for i in 0..dims.len() {
+                                if dims[i] == "current" && i + 3 < dims.len() {
+                                    if let (Ok(w), Ok(h)) = (dims[i+1].parse::<u32>(), dims[i+3].parse::<u32>()) {
+                                        log::info!("[kiosk] Setting window to {}x{} (bare X fullscreen)", w, h);
+                                        use tauri::PhysicalSize;
+                                        builder = builder.inner_size(PhysicalSize::new(w, h));
+                                        builder = builder.position(tauri::Position::Physical(tauri::PhysicalPosition::new(0, 0)));
+                                    }
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            let main_window = builder.build().expect("Failed to create main window");
 
             // Set zoom after a short delay (WebKitGTK needs the page to load)
             let main_win_for_zoom = main_window.clone();
@@ -138,11 +169,31 @@ async fn main() {
             drop(main_window);
             drop(info_window);
 
+            // Start display schedule if configured
+            {
+                let cfg = config.read().await;
+                if let Some(ref schedule) = cfg.display_schedule {
+                    if schedule.enabled {
+                        log::info!(
+                            "[display] Schedule enabled: on={}, off={}, days={:?}",
+                            schedule.on.as_deref().unwrap_or("N/A"),
+                            schedule.off.as_deref().unwrap_or("N/A"),
+                            schedule.days
+                        );
+                    }
+                }
+            }
+            let schedule_for_display = Arc::new(RwLock::new(
+                config.read().await.display_schedule.clone(),
+            ));
+            display::spawn_scheduler(schedule_for_display.clone());
+
             // Spawn the controller connection task
             let config_for_connect = config.clone();
             let system_info_for_connect = system_info.clone();
             let app_handle_for_connect = app_handle.clone();
             let config_path_for_connect = config_path.clone();
+            let schedule_for_remote = schedule_for_display.clone();
 
             tokio::spawn(async move {
                 connect_to_controller(
@@ -151,6 +202,7 @@ async fn main() {
                     app_handle_for_connect,
                     config_path_for_connect,
                     device_info.clone(),
+                    schedule_for_remote,
                 )
                 .await;
             });
@@ -168,6 +220,7 @@ async fn connect_to_controller(
     app_handle: tauri::AppHandle,
     config_path: PathBuf,
     device_info: Arc<RwLock<serde_json::Value>>,
+    schedule_handle: Arc<RwLock<Option<crate::config::DisplaySchedule>>>,
 ) {
     let controller = config.read().await.controller.clone();
     if controller.is_empty() {
@@ -176,7 +229,7 @@ async fn connect_to_controller(
     }
 
     loop {
-        match try_connect(&config, &system_info, &app_handle, &config_path, &device_info).await {
+        match try_connect(&config, &system_info, &app_handle, &config_path, &device_info, &schedule_handle).await {
             Ok(()) => break,
             Err(e) => {
                 log::error!("[controller] Connection failed: {}", e);
@@ -193,6 +246,7 @@ async fn try_connect(
     app_handle: &tauri::AppHandle,
     config_path: &PathBuf,
     device_info: &Arc<RwLock<serde_json::Value>>,
+    schedule_handle: &Arc<RwLock<Option<crate::config::DisplaySchedule>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Get or create keys
     let (private_key_pem, public_key_pem) = keys::get_or_create_keys()?;
@@ -242,7 +296,7 @@ async fn try_connect(
         Ok(result) => {
             // Apply server config snapshot
             if let Some(remote_config) = result.get("config") {
-                apply_remote_config(config, remote_config, &config_path, app_handle).await;
+                apply_remote_config(config, remote_config, &config_path, app_handle, Some(schedule_handle)).await;
             }
 
             let status = result["status"].as_str().unwrap_or("pending");
@@ -255,6 +309,7 @@ async fn try_connect(
                     &private_key_pem,
                     &config_path,
                     app_handle,
+                    schedule_handle,
                 )
                 .await?;
             }
@@ -269,6 +324,7 @@ async fn try_connect(
                 app_handle,
                 device_info,
                 &system_info,
+                schedule_handle,
             )
             .await?;
         }
@@ -281,6 +337,7 @@ async fn try_connect(
                 &private_key_pem,
                 &config_path,
                 app_handle,
+                schedule_handle,
             )
             .await?;
 
@@ -294,6 +351,7 @@ async fn try_connect(
                 app_handle,
                 device_info,
                 &system_info,
+                schedule_handle,
             )
             .await?;
         }
@@ -310,6 +368,7 @@ async fn wait_for_adoption(
     private_key_pem: &str,
     config_path: &PathBuf,
     app_handle: &tauri::AppHandle,
+    schedule_handle: &Arc<RwLock<Option<crate::config::DisplaySchedule>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
@@ -320,7 +379,7 @@ async fn wait_for_adoption(
                 if status != "pending" {
                     log::info!("[controller] Device adopted! Status: {}", status);
                     if let Some(remote_config) = result.get("config") {
-                        apply_remote_config(config, remote_config, config_path, app_handle).await;
+                        apply_remote_config(config, remote_config, config_path, app_handle, Some(schedule_handle)).await;
                     }
                     return Ok(());
                 }
@@ -343,6 +402,7 @@ async fn start_full_operation(
     app_handle: &tauri::AppHandle,
     _device_info: &Arc<RwLock<serde_json::Value>>,
     system_info: &serde_json::Value,
+    schedule_handle: &Arc<RwLock<Option<crate::config::DisplaySchedule>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     log::info!("[controller] Starting full operation");
 
@@ -377,12 +437,14 @@ async fn start_full_operation(
         let cfg = poller_config.clone();
         let path = poller_config_path.clone();
         let app = poller_app.clone();
+        let sched = schedule_handle.clone();
         move |remote_config: serde_json::Value| {
             let cfg = cfg.clone();
             let path = path.clone();
             let app = app.clone();
+            let sched = sched.clone();
             tokio::spawn(async move {
-                apply_remote_config(&cfg, &remote_config, &path, &app).await;
+                apply_remote_config(&cfg, &remote_config, &path, &app, Some(&sched)).await;
             });
         }
     };
@@ -458,12 +520,14 @@ async fn start_full_operation(
         let path = config_path.clone();
         let app = app_handle.clone();
         let handle = rt_handle.clone();
+        let sched = schedule_handle.clone();
         move |remote_config: serde_json::Value| {
             let cfg = cfg.clone();
             let path = path.clone();
             let app = app.clone();
+            let sched = sched.clone();
             handle.spawn(async move {
-                apply_remote_config(&cfg, &remote_config, &path, &app).await;
+                apply_remote_config(&cfg, &remote_config, &path, &app, Some(&sched)).await;
             });
         }
     };
@@ -511,12 +575,19 @@ async fn apply_remote_config(
     remote_config: &serde_json::Value,
     config_path: &PathBuf,
     app_handle: &tauri::AppHandle,
+    schedule_handle: Option<&Arc<RwLock<Option<crate::config::DisplaySchedule>>>>,
 ) {
     let mut cfg = config.write().await;
     let changed = cfg.apply_remote(remote_config);
 
     if changed {
         log::info!("[controller] Remote config applied");
+
+        // Update the display schedule handle so the scheduler picks it up
+        if let Some(handle) = schedule_handle {
+            let mut sh = handle.write().await;
+            *sh = cfg.display_schedule.clone();
+        }
 
         // Apply immediate effects
         if let Some(webview) = app_handle.get_webview_window("main") {
