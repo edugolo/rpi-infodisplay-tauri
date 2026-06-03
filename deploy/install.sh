@@ -198,7 +198,7 @@ Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/${KIOSK_USER}/.Xauthority
 WorkingDirectory=${INSTALL_DIR}
 ExecStartPre=/bin/sleep 3
-ExecStart=${INSTALL_DIR}/rpi-infodisplay
+ExecStart=/usr/bin/xinit ${INSTALL_DIR}/rpi-infodisplay -- /usr/bin/X -nocursor
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -206,51 +206,11 @@ StandardError=journal
 SyslogIdentifier=kiosk-display
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
 ok "Systemd service installed."
-
-# ── Step 5: Auto-login + X11 auto-start (Pi OS Lite) ────────────────────────
-info "Configuring auto-login and X11..."
-
-if command -v raspi-config &>/dev/null; then
-    raspi-config nonint do_boot_behaviour B2 2>/dev/null || true
-else
-    mkdir -p /etc/systemd/system/getty@tty1.service.d
-    cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << EOF
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty -a ${KIOSK_USER} --noclear %I \$TERM
-EOF
-fi
-ok "Auto-login configured"
-
-XINITRC="/home/${KIOSK_USER}/.xinitrc"
-cat > "${XINITRC}" << 'XEOF'
-#!/bin/bash
-xset s off
-xset -dpms
-xset s noblank
-exec /opt/rpi-infodisplay/rpi-infodisplay
-XEOF
-chown "${KIOSK_USER}:${KIOSK_USER}" "${XINITRC}"
-chmod +x "${XINITRC}"
-
-PROFILE="/home/${KIOSK_USER}/.profile"
-if ! grep -q "startx" "${PROFILE}" 2>/dev/null; then
-    cat >> "${PROFILE}" << 'PEOF'
-
-# Auto-start X11 kiosk on tty1
-if [[ -z "${DISPLAY:-}" ]] && [[ "$(tty)" == "/dev/tty1" ]]; then
-    startx -- -nocursor > /dev/null 2>&1 &
-    logout
-fi
-PEOF
-    chown "${KIOSK_USER}:${KIOSK_USER}" "${PROFILE}"
-fi
-ok "X11 auto-start configured"
 
 # ── Step 6: Enable service ──────────────────────────────────────────────────
 systemctl enable rpi-infodisplay.service 2>/dev/null || true
