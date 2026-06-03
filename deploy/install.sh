@@ -101,7 +101,7 @@ DEPS=(
 
     # Tauri/WebKitGTK runtime
     libwebkit2gtk-4.1-0 libgtk-3-0
-    libgdk-pixbuf2.0-0 libpango-1.0-0 libcairo2
+    libgdk-pixbuf-2.0-0 libpango-1.0-0 libcairo2
     libglib2.0-0 libayatana-appindicator3-1
     librsvg2-common
 
