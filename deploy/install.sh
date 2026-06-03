@@ -114,23 +114,27 @@ if [[ -n "${BINARY_SOURCE}" ]]; then
     ok "Binary copied from ${BINARY_SOURCE}"
 
 elif [[ -n "${VERSION}" ]]; then
+    # Determine the correct binary name for this architecture
+    ARCH=$(uname -m)
+    if [[ "${ARCH}" == "aarch64" ]]; then
+        BINARY_NAME="rpi-infodisplay"
+    else
+        BINARY_NAME="rpi-infodisplay-x86_64"
+    fi
+
     if [[ "${VERSION}" == "latest" ]]; then
         info "Looking up latest release..."
-        RELEASE_URL=$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
-            | grep -oP '"browser_download_url":\s*"\K[^"]*rpi-infodisplay"' \
-            | head -1 | tr -d '"')
-        if [[ -z "${RELEASE_URL}" ]]; then
-            RELEASE_URL=$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
-                | grep -oP '"browser_download_url":\s*"\K[^"]+' \
-                | head -1)
+        TAG=$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
+            | grep -oP '"tag_name":\s*"\K[^"]+' \
+            | head -1)
+        if [[ -z "${TAG}" ]]; then
+            err "Could not determine latest release tag"
+            exit 1
         fi
+        info "Latest release: ${TAG}"
+        RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG}/${BINARY_NAME}"
     else
-        ARCH=$(uname -m)
-        if [[ "${ARCH}" == "aarch64" ]]; then
-            RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/rpi-infodisplay"
-        else
-            RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/rpi-infodisplay-x86_64"
-        fi
+        RELEASE_URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/${BINARY_NAME}"
     fi
 
     info "Downloading binary from ${RELEASE_URL}..."
