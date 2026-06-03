@@ -1,5 +1,5 @@
 use crate::config::DisplaySchedule;
-use chrono::{Datelike, Local, NaiveTime, Timelike};
+use chrono::{Datelike, Local, NaiveTime};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;

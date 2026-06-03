@@ -19,7 +19,7 @@ pub struct AppConfig {
     pub display_schedule: Option<DisplaySchedule>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DisplaySchedule {
     /// Whether the schedule is active
     #[serde(default)]

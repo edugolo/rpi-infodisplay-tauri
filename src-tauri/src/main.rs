@@ -169,8 +169,13 @@ async fn main() {
             drop(info_window);
 
             // Start display schedule if configured
+            // Start display schedule if configured (setup closure is not async, use block_on)
+            let rt = tokio::runtime::Handle::current();
+            let schedule_for_display = Arc::new(RwLock::new(
+                rt.block_on(config.read()).display_schedule.clone(),
+            ));
             {
-                let cfg = config.read().await;
+                let cfg = rt.block_on(config.read());
                 if let Some(ref schedule) = cfg.display_schedule {
                     if schedule.enabled {
                         log::info!(
@@ -182,9 +187,6 @@ async fn main() {
                     }
                 }
             }
-            let schedule_for_display = Arc::new(RwLock::new(
-                config.read().await.display_schedule.clone(),
-            ));
             display::spawn_scheduler(schedule_for_display.clone());
 
             // Spawn the controller connection task
@@ -219,7 +221,7 @@ async fn connect_to_controller(
     app_handle: tauri::AppHandle,
     config_path: PathBuf,
     device_info: Arc<RwLock<serde_json::Value>>,
-    schedule_handle: Arc<RwLock<Option<crate::config::DisplaySchedule>>>,
+    schedule_handle: Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>,
 ) {
     let controller = config.read().await.controller.clone();
     if controller.is_empty() {
@@ -245,7 +247,7 @@ async fn try_connect(
     app_handle: &tauri::AppHandle,
     config_path: &PathBuf,
     device_info: &Arc<RwLock<serde_json::Value>>,
-    schedule_handle: &Arc<RwLock<Option<crate::config::DisplaySchedule>>>,
+    schedule_handle: &Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Get or create keys
     let (private_key_pem, public_key_pem) = keys::get_or_create_keys()?;
@@ -367,7 +369,7 @@ async fn wait_for_adoption(
     private_key_pem: &str,
     config_path: &PathBuf,
     app_handle: &tauri::AppHandle,
-    schedule_handle: &Arc<RwLock<Option<crate::config::DisplaySchedule>>>,
+    schedule_handle: &Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
@@ -401,7 +403,7 @@ async fn start_full_operation(
     app_handle: &tauri::AppHandle,
     _device_info: &Arc<RwLock<serde_json::Value>>,
     system_info: &serde_json::Value,
-    schedule_handle: &Arc<RwLock<Option<crate::config::DisplaySchedule>>>,
+    schedule_handle: &Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     log::info!("[controller] Starting full operation");
 
@@ -574,7 +576,7 @@ async fn apply_remote_config(
     remote_config: &serde_json::Value,
     config_path: &PathBuf,
     app_handle: &tauri::AppHandle,
-    schedule_handle: Option<&Arc<RwLock<Option<crate::config::DisplaySchedule>>>>,
+    schedule_handle: Option<&Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>>,
 ) {
     let mut cfg = config.write().await;
     let changed = cfg.apply_remote(remote_config);
