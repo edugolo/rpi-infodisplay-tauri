@@ -193,9 +193,6 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=${KIOSK_USER}
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/${KIOSK_USER}/.Xauthority
 WorkingDirectory=${INSTALL_DIR}
 ExecStartPre=/bin/sleep 3
 ExecStart=/usr/bin/xinit ${INSTALL_DIR}/rpi-infodisplay -- /usr/bin/X -nocursor
