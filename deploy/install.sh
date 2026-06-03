@@ -30,9 +30,14 @@ ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
 err()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 # ── Pre-flight ───────────────────────────────────────────────────────────────
+# If not root, save self to a temp file and re-exec with sudo.
+# This allows piping over SSH: cat install.sh | ssh pi@host 'bash -s -- --latest'
 if [[ $EUID -ne 0 ]]; then
-    err "This script must be run as root (use sudo)."
-    exit 1
+    # We're being piped — save to temp and re-exec
+    TMPFILE=$(mktemp /tmp/rpi-infodisplay-install.XXXXXX.sh)
+    cat > "$TMPFILE"
+    chmod +x "$TMPFILE"
+    exec sudo bash "$TMPFILE" "$@"
 fi
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
