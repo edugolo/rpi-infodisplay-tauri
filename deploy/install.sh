@@ -252,7 +252,7 @@ systemctl daemon-reload
 ok "Systemd service installed."
 
 # ── Step 6: Enable service ──────────────────────────────────────────────────
-systemctl enable rpi-infodisplay.service 2>/dev/null || true
+systemctl enable rpi-infodisplay.service
 ok "Service enabled"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
