@@ -94,7 +94,9 @@ async fn main() {
                             let dims: Vec<&str> = line.split_whitespace().collect();
                             for i in 0..dims.len() {
                                 if dims[i] == "current" && i + 3 < dims.len() {
-                                    if let (Ok(w), Ok(h)) = (dims[i+1].parse::<u32>(), dims[i+3].parse::<u32>()) {
+                                    let w_str = dims[i+1].trim_end_matches(',');
+                                    let h_str = dims[i+3].trim_end_matches(',');
+                                    if let (Ok(w), Ok(h)) = (w_str.parse::<u32>(), h_str.parse::<u32>()) {
                                         log::info!("[kiosk] Setting window to {}x{} (bare X fullscreen)", w, h);
                                         builder = builder.inner_size(w as f64, h as f64);
                                         builder = builder.position(0.0, 0.0);
