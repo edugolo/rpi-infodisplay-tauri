@@ -162,23 +162,34 @@ ok "Binary installed: ${INSTALL_DIR}/rpi-infodisplay ($(du -h "${INSTALL_DIR}/rp
 if command -v raspi-config &>/dev/null; then
     info "Raspberry Pi detected — applying GPU optimizations..."
 
-    # Set gpu_mem for better GPU compositing (default 64MB is too low)
+    # Detect Pi model
+    PI_MODEL=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo "")
+    info "Detected: ${PI_MODEL}"
+
     BOOT_CONFIG=""
     for f in /boot/firmware/config.txt /boot/config.txt; do
         if [[ -f "$f" ]]; then BOOT_CONFIG="$f"; break; fi
     done
 
     if [[ -n "${BOOT_CONFIG}" ]]; then
-        # Remove existing gpu_mem lines and set to 384MB
-        sed -i '/^gpu_mem/d' "${BOOT_CONFIG}"
-        echo "gpu_mem=384" >> "${BOOT_CONFIG}"
+        # Pi 0/1/2/3: shared memory architecture — gpu_mem matters
+        # Pi 4+: dedicated GPU memory — gpu_mem is ignored or wastes ARM RAM
+        if echo "${PI_MODEL}" | grep -qE 'Pi [0123]'; then
+            sed -i '/^gpu_mem/d' "${BOOT_CONFIG}"
+            echo "gpu_mem=384" >> "${BOOT_CONFIG}"
+            ok "GPU: gpu_mem=384 (shared memory Pi)"
+        else
+            # Pi 4/5: remove gpu_mem if present, not needed
+            sed -i '/^gpu_mem/d' "${BOOT_CONFIG}"
+            ok "GPU: gpu_mem not set (dedicated GPU memory Pi)"
+        fi
 
         # Ensure vc4-kms-v3d overlay is present for GPU acceleration
         if ! grep -q 'dtoverlay=vc4-kms-v3d' "${BOOT_CONFIG}"; then
             echo "dtoverlay=vc4-kms-v3d" >> "${BOOT_CONFIG}"
         fi
 
-        ok "GPU: gpu_mem=384, vc4-kms-v3d overlay (${BOOT_CONFIG})"
+        ok "GPU: vc4-kms-v3d overlay set (${BOOT_CONFIG})"
     else
         warn "No boot config.txt found — skipping GPU optimizations"
     fi
