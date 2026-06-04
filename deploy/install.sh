@@ -91,8 +91,8 @@ DEPS=(
     # Fonts
     fonts-dejavu-core fonts-liberation
 
-    # Screenshot tools (app tries: grim → scrot → import)
-    grim scrot imagemagick
+    # Screenshot tool (Wayland native)
+    grim
 
     # HDMI CEC display control (cec-client)
     cec-utils

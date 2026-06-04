@@ -198,69 +198,23 @@ impl CommandDispatcher {
         Ok(())
     }
 
-    /// Try screenshot tools in order, verifying each produces a non-black image.
-    /// spectacle: KDE Plasma (Wayland + X11)
-    /// grim: wlroots-based Wayland compositors (Sway, Hyprland, etc.)
-    /// gnome-screenshot: GNOME via D-Bus portal
-    /// scrot: X11 only (reliable on Pi)
-    /// import: ImageMagick fallback (X11)
+    /// Take a screenshot using grim (Wayland native, wlroots compositors).
     async fn try_screenshot_tool(&self, path: &str) -> Result<std::process::Output, Box<dyn std::error::Error + Send + Sync>> {
-        // spectacle — KDE Plasma, works on Wayland
-        let output = tokio::process::Command::new("spectacle")
-            .args(["-b", "-n", "-o", path])
-            .output()
-            .await;
-        if let Ok(out) = output {
-            if out.status.success() && !Self::is_black_image(path).await {
-                return Ok(out);
-            }
-        }
-
-        // grim — Wayland native (wlroots compositors)
         let output = tokio::process::Command::new("grim")
             .arg(path)
             .output()
-            .await;
-        if let Ok(out) = output {
-            if out.status.success() && !Self::is_black_image(path).await {
-                return Ok(out);
-            }
+            .await?;
+
+        if !output.status.success() {
+            return Err(format!("grim failed: {}", String::from_utf8_lossy(&output.stderr)).into());
         }
 
-        // gnome-screenshot — GNOME via XDG portal
-        let output = tokio::process::Command::new("gnome-screenshot")
-            .args(["-f", path])
-            .output()
-            .await;
-        if let Ok(out) = output {
-            if out.status.success() && !Self::is_black_image(path).await {
-                return Ok(out);
-            }
+        // Verify the image is not all-black
+        if Self::is_black_image(path).await {
+            return Err("grim produced a black image".into());
         }
 
-        // scrot — reliable on Pi/X11 (produces black on Wayland)
-        let output = tokio::process::Command::new("scrot")
-            .args(["-z", "-o", path])
-            .output()
-            .await;
-        if let Ok(out) = output {
-            if out.status.success() && !Self::is_black_image(path).await {
-                return Ok(out);
-            }
-        }
-
-        // import (ImageMagick) — X11 fallback
-        let output = tokio::process::Command::new("import")
-            .args(["-window", "root", path])
-            .output()
-            .await;
-        if let Ok(out) = output {
-            if out.status.success() {
-                return Ok(out);
-            }
-        }
-
-        Err("No screenshot tool produced a valid image (tried: spectacle, grim, gnome-screenshot, scrot, import)".into())
+        Ok(output)
     }
 
     /// Check if a captured PNG is all-black (some tools succeed but produce
