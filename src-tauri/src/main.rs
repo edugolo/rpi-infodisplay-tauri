@@ -71,35 +71,49 @@ async fn main() {
             let url = app_config.url.clone().unwrap_or_else(|| "https://edugo.be".to_string());
             let zoom_factor = app_config.zoom_factor.unwrap_or(1.0);
 
-            // On bare X (no window manager), fullscreen hints don't work.
-            // Detect screen size via xrandr as a fallback.
+            // Detect screen size.
+            // - On bare X (no WM): xrandr fallback for fullscreen sizing
+            // - On Wayland (cage): skip xrandr, compositor handles fullscreen
+            //   but we still set a safe initial size to avoid GTK assertions.
+            let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+
             let screen_size = if fullscreen {
-                std::process::Command::new("xrandr")
-                    .arg("--current")
-                    .env("DISPLAY", ":0")
-                    .output()
-                    .ok()
-                    .and_then(|o| {
-                        let out = String::from_utf8_lossy(&o.stdout);
-                        for line in out.lines() {
-                            if line.contains("current") {
-                                let dims: Vec<&str> = line.split_whitespace().collect();
-                                for i in 0..dims.len() {
-                                    if dims[i] == "current" && i + 3 < dims.len() {
-                                        let w = dims[i+1].trim_end_matches(',').parse::<u32>().ok()?;
-                                        let h = dims[i+3].trim_end_matches(',').parse::<u32>().ok()?;
-                                        return Some((w, h));
+                if is_wayland {
+                    // cage will resize to fill the output; provide a safe default
+                    // to prevent gtk_window_resize assertion 'width > 0' errors.
+                    None // let cage handle it
+                } else {
+                    std::process::Command::new("xrandr")
+                        .arg("--current")
+                        .env("DISPLAY", ":0")
+                        .output()
+                        .ok()
+                        .and_then(|o| {
+                            let out = String::from_utf8_lossy(&o.stdout);
+                            for line in out.lines() {
+                                if line.contains("current") {
+                                    let dims: Vec<&str> = line.split_whitespace().collect();
+                                    for i in 0..dims.len() {
+                                        if dims[i] == "current" && i + 3 < dims.len() {
+                                            let w = dims[i+1].trim_end_matches(',').parse::<u32>().ok()?;
+                                            let h = dims[i+3].trim_end_matches(',').parse::<u32>().ok()?;
+                                            if w > 0 && h > 0 {
+                                                return Some((w, h));
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
-                        None
-                    })
+                            None
+                        })
+                }
             } else {
                 None
             };
             if let Some((w, h)) = screen_size {
                 log::info!("[kiosk] Detected screen {}x{} via xrandr", w, h);
+            } else if fullscreen {
+                log::info!("[kiosk] Fullscreen mode, compositor will handle sizing");
             }
 
             let mut builder = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::External(url.parse().unwrap()))
