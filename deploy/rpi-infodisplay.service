@@ -1,13 +1,14 @@
 [Unit]
 Description=Edugo Kiosk Display (Tauri)
-After=network-online.target
-Wants=network-online.target
+After=seatd.service network-online.target
+Wants=seatd.service network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/rpi-infodisplay
 Environment=WEBKIT_DISABLE_DMABUF_RENDERER=1
 Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=WLR_LIBINPUT_NO_DEVICES=1
 ExecStartPre=/bin/sleep 3
 ExecStart=/usr/bin/cage -d -- /opt/rpi-infodisplay/rpi-infodisplay
 Restart=on-failure

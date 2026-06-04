@@ -79,8 +79,8 @@ apt-get update -qq
 
 info "Installing system dependencies..."
 DEPS=(
-    # Wayland kiosk compositor
-    cage
+    # Wayland kiosk compositor + seat management
+    cage seatd
 
     # Tauri/WebKitGTK runtime
     libwebkit2gtk-4.1-0 libgtk-3-0
@@ -235,14 +235,15 @@ info "Installing systemd service..."
 cat > /etc/systemd/system/rpi-infodisplay.service << EOF
 [Unit]
 Description=Edugo Kiosk Display (Tauri)
-After=network-online.target
-Wants=network-online.target
+After=seatd.service network-online.target
+Wants=seatd.service network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_DIR}
 Environment=WEBKIT_DISABLE_DMABUF_RENDERER=1
 Environment=XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}
+Environment=WLR_LIBINPUT_NO_DEVICES=1
 ExecStartPre=/bin/sleep 3
 ExecStart=/usr/bin/cage -d -- ${INSTALL_DIR}/rpi-infodisplay
 Restart=on-failure
