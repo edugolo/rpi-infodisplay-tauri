@@ -23,26 +23,35 @@ sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev
 ```
 
 ### Raspberry Pi OS Lite (target)
+
+No manual setup needed — the install script handles everything. See [Deployment](#deployment) below.
+
+<details>
+<summary>Manual dependency list (for reference)</summary>
+
 ```bash
-# Minimal X11 + WebKitGTK + screenshot tools + display control
 sudo apt install --no-install-recommends \
-  xorg xserver-xorg-video-all xinit \
+  cage seatd \
   libwebkit2gtk-4.1-0 libgtk-3-0 \
   libgdk-pixbuf-2.0-0 libpango-1.0-0 libcairo2 \
   libglib2.0-0 libayatana-appindicator3-1 \
-  librsvg2-common fonts-dejavu-core \
-  scrot imagemagick \
-  cec-utils curl ca-certificates
+  librsvg2-common fonts-dejavu-core fonts-liberation \
+  scrot imagemagick cec-utils \
+  mesa-utils libgl1-mesa-dri libegl1 libgles2 \
+  curl ca-certificates
 ```
 
 | Package | Why |
 |---|---|
-| `xorg`, `xserver-xorg-video-all`, `xinit` | X11 server (Pi OS Lite has no desktop) |
+| `cage` | Wayland kiosk compositor |
+| `seatd` | DRM/seat management for cage |
 | `libwebkit2gtk-4.1-0` | WebKit rendering engine (Tauri runtime) |
 | `libgtk-3-0` | GTK3 (Tauri runtime) |
-| `scrot` | Primary screenshot tool (X11, reliable on Pi) |
-| `imagemagick` | Fallback screenshot (`import -window root`) |
-| `cec-utils` | HDMI CEC control (turn TV on/off via `cec-client`) |
+| `mesa-utils`, `libgl1-mesa-dri` | GPU acceleration (VC4/V3D) |
+| `scrot`, `imagemagick` | Screenshot tools |
+| `cec-utils` | HDMI CEC control (turn TV on/off) |
+
+</details>
 
 ## Build
 
@@ -100,32 +109,58 @@ Keys and device ID are stored in `~/.config/rpi-infodisplay/`:
 
 ## Deployment
 
-### One-liner from your PC (recommended)
+### One-liner install on a fresh Pi (recommended)
 
-Downloads the binary from GitHub Releases, installs everything, no files to copy:
+SSH into the Pi and run:
 
 ```bash
-# Minimal — reuses existing config on the Pi:
-ssh pi@kiosk.local 'curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest'
-
-# With config values:
-ssh pi@kiosk.local 'curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest --name "Hall A" --location "Floor 1" --controller "https://controller.example.com/tenant"'
-
-# Then reboot
-ssh pi@kiosk.local 'sudo reboot'
+# Download and run the installer (latest release)
+curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest
 ```
 
-The script installs all system deps (X11, WebKitGTK, screenshot tools, CEC),
-downloads the binary, sets up the systemd service, and configures auto-login
-+ X11 auto-start — all in one go.
+With config values:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/deploy/install.sh | sudo bash -s -- --latest \
+  --name "helpdesk" --location "g006" \
+  --controller "https://app.edugo.be/lochristi" \
+  --url "https://app.edugo.be/lochristi/display"
+```
+
+Then reboot:
+
+```bash
+sudo reboot
+```
+
+What the script does:
+1. Installs all system dependencies (cage, WebKitGTK, GPU drivers, fonts)
+2. Downloads the latest binary from GitHub Releases
+3. Applies Raspberry Pi GPU optimizations (`gpu_mem`, `vc4-kms-v3d`)
+4. Sets up the systemd service (cage + app, auto-starts on boot)
+5. Writes config to `/opt/rpi-infodisplay/config.json`
+6. Enables seatd for DRM access
+
+### Updating an existing Pi
+
+```bash
+# Quick binary swap (keeps config):
+sudo systemctl stop rpi-infodisplay
+curl -fsSL -o /opt/rpi-infodisplay/rpi-infodisplay \
+  https://github.com/edugolo/rpi-infodisplay-tauri/releases/latest/download/rpi-infodisplay-aarch64
+sudo chmod +x /opt/rpi-infodisplay/rpi-infodisplay
+sudo systemctl start rpi-infodisplay
+```
+
+Or re-run the full installer — it preserves existing config.
 
 ### Managing the service
 
 ```bash
-ssh pi@kiosk.local 'sudo systemctl status rpi-infodisplay'     # check status
-ssh pi@kiosk.local 'journalctl -u rpi-infodisplay -f'           # follow logs
-ssh pi@kiosk.local 'sudo systemctl restart rpi-infodisplay'     # restart
-ssh pi@kiosk.local 'sudo systemctl stop rpi-infodisplay'        # stop
+sudo systemctl status rpi-infodisplay      # check status
+journalctl -u rpi-infodisplay -f            # follow logs
+sudo systemctl restart rpi-infodisplay      # restart
+sudo systemctl stop rpi-infodisplay         # stop
 ```
 
 ## License

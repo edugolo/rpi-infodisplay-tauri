@@ -259,9 +259,10 @@ EOF
 systemctl daemon-reload
 ok "Systemd service installed."
 
-# ── Step 6: Enable service ──────────────────────────────────────────────────
+# ── Step 6: Enable services ─────────────────────────────────────────────────
+systemctl enable --now seatd.service 2>/dev/null || true
 systemctl enable rpi-infodisplay.service
-ok "Service enabled"
+ok "Services enabled"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 echo ""
