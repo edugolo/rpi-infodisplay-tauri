@@ -6,10 +6,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/rpi-infodisplay
-Environment=DISPLAY=:0
-Environment=GDK_BACKEND=x11
+Environment=WEBKIT_DISABLE_DMABUF_RENDERER=1
+Environment=XDG_RUNTIME_DIR=/run/user/1000
 ExecStartPre=/bin/sleep 3
-ExecStart=/usr/bin/xinit /opt/rpi-infodisplay/rpi-infodisplay -- /usr/bin/X -nocursor
+ExecStart=/usr/bin/cage -d -- /opt/rpi-infodisplay/rpi-infodisplay
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal

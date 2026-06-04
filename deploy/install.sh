@@ -79,8 +79,8 @@ apt-get update -qq
 
 info "Installing system dependencies..."
 DEPS=(
-    # X server (needed on Pi OS Lite)
-    xorg xserver-xorg-video-all xinit
+    # Wayland kiosk compositor
+    cage
 
     # Tauri/WebKitGTK runtime
     libwebkit2gtk-4.1-0 libgtk-3-0
@@ -98,7 +98,7 @@ DEPS=(
     cec-utils
 
     # GPU acceleration (Mesa VC4/V3D DRI driver)
-    mesa-utils libgl1-mesa-dri
+    mesa-utils libgl1-mesa-dri libegl1 libgles2
 
     # Needed by this script / app
     curl ca-certificates
@@ -224,20 +224,27 @@ chown "${KIOSK_USER}:${KIOSK_USER}" "${INSTALL_DIR}/config.json"
 ok "Config written to ${INSTALL_DIR}/config.json"
 
 # ── Step 4: Systemd service ─────────────────────────────────────────────────
+# Ensure XDG_RUNTIME_DIR exists for Wayland
+KIOSK_UID=$(id -u "${KIOSK_USER}")
+XDG_RUNTIME_DIR="/run/user/${KIOSK_UID}"
+mkdir -p "${XDG_RUNTIME_DIR}"
+chown "${KIOSK_USER}:${KIOSK_USER}" "${XDG_RUNTIME_DIR}"
+chmod 700 "${XDG_RUNTIME_DIR}"
+
 info "Installing systemd service..."
 cat > /etc/systemd/system/rpi-infodisplay.service << EOF
 [Unit]
 Description=Edugo Kiosk Display (Tauri)
-After=graphical.target network-online.target
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_DIR}
-Environment=DISPLAY=:0
-Environment=GDK_BACKEND=x11
+Environment=WEBKIT_DISABLE_DMABUF_RENDERER=1
+Environment=XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}
 ExecStartPre=/bin/sleep 3
-ExecStart=/usr/bin/xinit ${INSTALL_DIR}/rpi-infodisplay -- /usr/bin/X -nocursor
+ExecStart=/usr/bin/cage -d -- ${INSTALL_DIR}/rpi-infodisplay
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
