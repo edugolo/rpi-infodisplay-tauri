@@ -91,8 +91,8 @@ DEPS=(
     # Fonts
     fonts-dejavu-core fonts-liberation
 
-    # Screenshot tools (app tries: scrot → import from imagemagick)
-    scrot imagemagick
+    # Screenshot tools (app tries: grim → scrot → import)
+    grim scrot imagemagick
 
     # HDMI CEC display control (cec-client)
     cec-utils
