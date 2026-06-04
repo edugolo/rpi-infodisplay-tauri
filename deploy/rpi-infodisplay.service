@@ -6,6 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/rpi-infodisplay
+Environment=DISPLAY=:0
+Environment=GDK_BACKEND=x11
 ExecStartPre=/bin/sleep 3
 ExecStart=/usr/bin/xinit /opt/rpi-infodisplay/rpi-infodisplay -- /usr/bin/X -nocursor
 Restart=on-failure

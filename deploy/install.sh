@@ -97,6 +97,9 @@ DEPS=(
     # HDMI CEC display control (cec-client)
     cec-utils
 
+    # GPU acceleration (Mesa VC4/V3D DRI driver)
+    mesa-utils libgl1-mesa-dri
+
     # Needed by this script / app
     curl ca-certificates
 )
@@ -155,6 +158,32 @@ chmod +x "${INSTALL_DIR}/rpi-infodisplay"
 chown -R "${KIOSK_USER}:${KIOSK_USER}" "${INSTALL_DIR}"
 ok "Binary installed: ${INSTALL_DIR}/rpi-infodisplay ($(du -h "${INSTALL_DIR}/rpi-infodisplay" | cut -f1))"
 
+# ── Step 2b: Raspberry Pi GPU optimization ───────────────────────────────────
+if command -v raspi-config &>/dev/null; then
+    info "Raspberry Pi detected — applying GPU optimizations..."
+
+    # Set gpu_mem for better GPU compositing (default 64MB is too low)
+    BOOT_CONFIG=""
+    for f in /boot/firmware/config.txt /boot/config.txt; do
+        if [[ -f "$f" ]]; then BOOT_CONFIG="$f"; break; fi
+    done
+
+    if [[ -n "${BOOT_CONFIG}" ]]; then
+        # Remove existing gpu_mem lines and set to 384MB
+        sed -i '/^gpu_mem/d' "${BOOT_CONFIG}"
+        echo "gpu_mem=384" >> "${BOOT_CONFIG}"
+
+        # Ensure vc4-kms-v3d overlay is present for GPU acceleration
+        if ! grep -q 'dtoverlay=vc4-kms-v3d' "${BOOT_CONFIG}"; then
+            echo "dtoverlay=vc4-kms-v3d" >> "${BOOT_CONFIG}"
+        fi
+
+        ok "GPU: gpu_mem=384, vc4-kms-v3d overlay (${BOOT_CONFIG})"
+    else
+        warn "No boot config.txt found — skipping GPU optimizations"
+    fi
+fi
+
 # ── Step 3: Config ───────────────────────────────────────────────────────────
 # Priority: CLI flags → existing config.json → defaults
 EXISTING_CONFIG="${INSTALL_DIR}/config.json"
@@ -194,6 +223,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_DIR}
+Environment=DISPLAY=:0
+Environment=GDK_BACKEND=x11
 ExecStartPre=/bin/sleep 3
 ExecStart=/usr/bin/xinit ${INSTALL_DIR}/rpi-infodisplay -- /usr/bin/X -nocursor
 Restart=on-failure
