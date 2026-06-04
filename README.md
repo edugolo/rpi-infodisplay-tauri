@@ -36,7 +36,7 @@ sudo apt install --no-install-recommends \
   libgdk-pixbuf-2.0-0 libpango-1.0-0 libcairo2 \
   libglib2.0-0 libayatana-appindicator3-1 \
   librsvg2-common fonts-dejavu-core fonts-liberation \
-  scrot imagemagick cec-utils \
+  grim wlr-randr \
   mesa-utils libgl1-mesa-dri libegl1 libgles2 \
   curl ca-certificates
 ```
@@ -48,8 +48,8 @@ sudo apt install --no-install-recommends \
 | `libwebkit2gtk-4.1-0` | WebKit rendering engine (Tauri runtime) |
 | `libgtk-3-0` | GTK3 (Tauri runtime) |
 | `mesa-utils`, `libgl1-mesa-dri` | GPU acceleration (VC4/V3D) |
-| `scrot`, `imagemagick` | Screenshot tools |
-| `cec-utils` | HDMI CEC control (turn TV on/off) |
+| `grim` | Wayland-native screenshot tool |
+| `wlr-randr` | Display power control (wake/sleep HDMI output) |
 
 </details>
 
@@ -98,7 +98,9 @@ The `displaySchedule` section controls automatic power on/off of the connected d
 | `off` | `string` | Time to power off (HH:MM, 24h format) |
 | `days` | `string[]` | Days to apply (e.g. `["mon","fri"]`). Empty = every day |
 
-Power-off uses **CEC** (via `cec-client`) first; if that fails it falls back to **HDMI** power control (`vcgencmd display_power`). This requires `cec-client` (from `libcec-dev`) to be installed for CEC, and `vcgencmd` (present on Raspberry Pi OS) for the HDMI fallback.
+Power-off uses **wlr-randr** to disable the GPU output signal — compatible with any monitor/TV on wlroots compositors (cage). The display enters standby when it loses signal.
+
+Requires `wlr-randr` (from the `wlr-randr` package).
 
 ## Key Storage
 

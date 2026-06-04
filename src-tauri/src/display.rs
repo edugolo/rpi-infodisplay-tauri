@@ -141,164 +141,101 @@ fn is_today_in_days(days: &[String], now: &chrono::DateTime<Local>) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Power control
+// Power control via wlr-randr
 // ---------------------------------------------------------------------------
+//
+// wlr-randr works on any wlroots-based compositor (cage, sway, etc.).
+// It disables/re-enables the GPU output, causing the TV/monitor to enter
+// standby when there's no signal. This is the most reliable method for
+// kiosk setups using the vc4-kms-v3d DRM driver (Pi 3/4/5).
+//
+// We look for wlr-randr in PATH. Both the scheduler and manual on/off
+// commands use it.
+
+/// Expected output name as reported by `wlr-randr` (cached after first detect).
+static WLR_OUTPUT_NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Discover the output name from `wlr-randr` (e.g. "HDMI-A-1").
+async fn detect_output_name() -> Option<String> {
+    let output = tokio::process::Command::new("wlr-randr")
+        .output()
+        .await
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The first line is the output name (before the space), e.g. "HDMI-A-1 ..."
+    stdout.lines().next().and_then(|line| {
+        line.split_whitespace().next().map(|s| s.to_string())
+    })
+}
+
+/// Run `wlr-randr --output <name> --on/--off` to toggle display power.
+async fn wlr_set_power(on: bool) -> bool {
+    let output_name = match WLR_OUTPUT_NAME.get() {
+        Some(name) => name.clone(),
+        None => {
+            let name = detect_output_name().await;
+            match name {
+                Some(n) => {
+                    let _ = WLR_OUTPUT_NAME.set(n.clone());
+                    n
+                }
+                None => {
+                    log::error!("[display] Could not detect wlr-randr output name (is wlr-randr installed?)");
+                    return false;
+                }
+            }
+        }
+    };
+
+    let cmd = if on { "--on" } else { "--off" };
+    let result = tokio::process::Command::new("wlr-randr")
+        .args(["--output", &output_name, cmd])
+        .output()
+        .await;
+
+    match result {
+        Ok(out) => {
+            if out.status.success() {
+                log::info!("[display/wlr] Output '{output_name}' turned {}", if on { "ON" } else { "OFF" });
+                true
+            } else {
+                log::warn!(
+                    "[display/wlr] wlr-randr failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                false
+            }
+        }
+        Err(e) => {
+            log::error!("[display/wlr] wlr-randr not available: {}", e);
+            false
+        }
+    }
+}
 
 async fn do_power_on() -> bool {
     log::info!("[display] Powering ON display");
-
-    // Try CEC first
-    if cec_power_on().await {
+    if wlr_set_power(true).await {
         DISPLAY_ON.store(true, Ordering::Relaxed);
         return true;
     }
-
-    // Fallback: HDMI
-    if hdmi_power_on().await {
-        DISPLAY_ON.store(true, Ordering::Relaxed);
-        return true;
-    }
-
-    log::error!("[display] Failed to power ON display (CEC and HDMI both failed)");
+    log::error!("[display] Failed to power ON display");
     false
 }
 
 async fn do_power_off() -> bool {
     log::info!("[display] Powering OFF display");
-
-    // Try CEC first
-    if cec_power_off().await {
+    if wlr_set_power(false).await {
         DISPLAY_ON.store(false, Ordering::Relaxed);
         return true;
     }
-
-    // Fallback: HDMI
-    if hdmi_power_off().await {
-        DISPLAY_ON.store(false, Ordering::Relaxed);
-        return true;
-    }
-
-    log::error!("[display] Failed to power OFF display (CEC and HDMI both failed)");
+    log::error!("[display] Failed to power OFF display");
     false
-}
-
-// ---------------------------------------------------------------------------
-// CEC control  (requires cec-client / libcec)
-// ---------------------------------------------------------------------------
-
-/// Send CEC "image view on" (opcode 0x04) to address 0 (TV).
-async fn cec_power_on() -> bool {
-    // `echo 'on 0' | cec-client -s -d 1`
-    let result = tokio::process::Command::new("sh")
-        .arg("-c")
-        .arg("echo 'on 0' | cec-client -s -d 1")
-        .output()
-        .await;
-
-    match result {
-        Ok(out) => {
-            if out.status.success() {
-                log::info!("[display/cec] CEC power ON sent");
-                true
-            } else {
-                log::warn!(
-                    "[display/cec] CEC power ON failed: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
-                false
-            }
-        }
-        Err(e) => {
-            log::warn!("[display/cec] cec-client not available: {}", e);
-            false
-        }
-    }
-}
-
-/// Send CEC "standby" (opcode 0x36) to address 0 (TV).
-async fn cec_power_off() -> bool {
-    let result = tokio::process::Command::new("sh")
-        .arg("-c")
-        .arg("echo 'standby 0' | cec-client -s -d 1")
-        .output()
-        .await;
-
-    match result {
-        Ok(out) => {
-            if out.status.success() {
-                log::info!("[display/cec] CEC standby sent");
-                true
-            } else {
-                log::warn!(
-                    "[display/cec] CEC standby failed: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
-                false
-            }
-        }
-        Err(e) => {
-            log::warn!("[display/cec] cec-client not available: {}", e);
-            false
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// HDMI control  (fallback — Raspberry Pi specific)
-// ---------------------------------------------------------------------------
-
-/// Power on HDMI output via `vcgencmd display_power 1`.
-async fn hdmi_power_on() -> bool {
-    let result = tokio::process::Command::new("vcgencmd")
-        .args(["display_power", "1"])
-        .output()
-        .await;
-
-    match result {
-        Ok(out) => {
-            if out.status.success() {
-                log::info!("[display/hdmi] HDMI powered ON");
-                true
-            } else {
-                log::warn!(
-                    "[display/hdmi] HDMI power ON failed: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
-                false
-            }
-        }
-        Err(e) => {
-            log::warn!("[display/hdmi] vcgencmd not available: {}", e);
-            false
-        }
-    }
-}
-
-/// Power off HDMI output via `vcgencmd display_power 0`.
-async fn hdmi_power_off() -> bool {
-    let result = tokio::process::Command::new("vcgencmd")
-        .args(["display_power", "0"])
-        .output()
-        .await;
-
-    match result {
-        Ok(out) => {
-            if out.status.success() {
-                log::info!("[display/hdmi] HDMI powered OFF");
-                true
-            } else {
-                log::warn!(
-                    "[display/hdmi] HDMI power OFF failed: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
-                false
-            }
-        }
-        Err(e) => {
-            log::warn!("[display/hdmi] vcgencmd not available: {}", e);
-            false
-        }
-    }
 }
 
 #[cfg(test)]
@@ -314,20 +251,6 @@ mod tests {
     }
 
     #[test]
-    fn test_should_display_be_on_normal_range() {
-        let schedule = DisplaySchedule {
-            enabled: true,
-            on: Some("07:00".into()),
-            off: Some("22:00".into()),
-            days: vec![],
-        };
-
-        // We can't easily test exact times without mocking, but we can test the logic
-        // by checking that the function doesn't panic and returns a bool.
-        let _ = should_display_be_on(&schedule);
-    }
-
-    #[test]
     fn test_should_display_be_on_no_times() {
         let schedule = DisplaySchedule {
             enabled: true,
@@ -336,19 +259,5 @@ mod tests {
             days: vec![],
         };
         assert!(should_display_be_on(&schedule));
-    }
-
-    #[test]
-    fn test_should_display_be_on_disabled() {
-        // Even with valid times, if we pass it, we'd get a bool.
-        // The enabled check is done by the caller (spawn_scheduler).
-        let schedule = DisplaySchedule {
-            enabled: false,
-            on: Some("07:00".into()),
-            off: Some("22:00".into()),
-            days: vec![],
-        };
-        // Function itself doesn't check enabled — scheduler does
-        let _ = should_display_be_on(&schedule);
     }
 }

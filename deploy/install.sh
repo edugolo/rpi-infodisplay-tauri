@@ -94,8 +94,8 @@ DEPS=(
     # Screenshot tool (Wayland native)
     grim
 
-    # HDMI CEC display control (cec-client)
-    cec-utils
+    # Display power control (wlr-randr for wlroots compositors)
+    wlr-randr
 
     # GPU acceleration (Mesa VC4/V3D DRI driver)
     mesa-utils libgl1-mesa-dri libegl1 libgles2
