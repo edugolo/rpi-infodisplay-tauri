@@ -71,6 +71,37 @@ async fn main() {
             let url = app_config.url.clone().unwrap_or_else(|| "https://edugo.be".to_string());
             let zoom_factor = app_config.zoom_factor.unwrap_or(1.0);
 
+            // On bare X (no window manager), fullscreen hints don't work.
+            // Detect screen size via xrandr as a fallback.
+            let screen_size = if fullscreen {
+                std::process::Command::new("xrandr")
+                    .arg("--current")
+                    .env("DISPLAY", ":0")
+                    .output()
+                    .ok()
+                    .and_then(|o| {
+                        let out = String::from_utf8_lossy(&o.stdout);
+                        for line in out.lines() {
+                            if line.contains("current") {
+                                let dims: Vec<&str> = line.split_whitespace().collect();
+                                for i in 0..dims.len() {
+                                    if dims[i] == "current" && i + 3 < dims.len() {
+                                        let w = dims[i+1].trim_end_matches(',').parse::<u32>().ok()?;
+                                        let h = dims[i+3].trim_end_matches(',').parse::<u32>().ok()?;
+                                        return Some((w, h));
+                                    }
+                                }
+                            }
+                        }
+                        None
+                    })
+            } else {
+                None
+            };
+            if let Some((w, h)) = screen_size {
+                log::info!("[kiosk] Detected screen {}x{} via xrandr", w, h);
+            }
+
             let mut builder = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::External(url.parse().unwrap()))
                 .fullscreen(fullscreen)
                 .decorations(decorations)
@@ -79,37 +110,8 @@ async fn main() {
                 .visible(true)
                 .background_color(tauri::webview::Color(0, 0, 0, 255));
 
-            // On bare X (no window manager), fullscreen hints don't work.
-            // Set inner size to screen dimensions as a fallback.
-            if fullscreen {
-                if let Ok(output) = std::process::Command::new("xrandr")
-                    .arg("--current")
-                    .env("DISPLAY", ":0")
-                    .output()
-                {
-                    let xrandr_out = String::from_utf8_lossy(&output.stdout);
-                    for line in xrandr_out.lines() {
-                        if line.contains("current") {
-                            // e.g. "Screen 0: minimum 320 x 200, current 1920 x 1080, maximum ..."
-                            let dims: Vec<&str> = line.split_whitespace().collect();
-                            for i in 0..dims.len() {
-                                if dims[i] == "current" && i + 3 < dims.len() {
-                                    let w_str = dims[i+1].trim_end_matches(',');
-                                    let h_str = dims[i+3].trim_end_matches(',');
-                                    if let (Ok(w), Ok(h)) = (w_str.parse::<u32>(), h_str.parse::<u32>()) {
-                                        log::info!("[kiosk] Setting window to {}x{} (bare X fullscreen)", w, h);
-                                        builder = builder.inner_size(w as f64, h as f64);
-                                        builder = builder.position(0.0, 0.0);
-                                    }
-                                    break;
-                                }
-                            }
-                            break;
-                        }
-                    }
-                } else {
-                    log::warn!("[kiosk] xrandr failed, falling back to default window size");
-                }
+            if let Some((w, h)) = screen_size {
+                builder = builder.inner_size(w as f64, h as f64).position(0.0, 0.0);
             }
 
             let main_window = builder.build().expect("Failed to create main window");
@@ -132,7 +134,7 @@ async fn main() {
             }
 
             // Create info overlay window (shown initially with device info)
-            let info_window = tauri::WebviewWindowBuilder::new(
+            let mut info_builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "info",
                 tauri::WebviewUrl::App("info-overlay/index.html".into()),
@@ -143,9 +145,13 @@ async fn main() {
             .visible(true)
             .focused(true)
             .fullscreen(true)
-            .background_color(tauri::webview::Color(0, 0, 0, 255))
-            .build()
-            .ok();
+            .background_color(tauri::webview::Color(0, 0, 0, 255));
+
+            if let Some((w, h)) = screen_size {
+                info_builder = info_builder.inner_size(w as f64, h as f64).position(0.0, 0.0);
+            }
+
+            let info_window = info_builder.build().ok();
 
             // Inject device info into overlay after it loads
             if let Some(ref info_win) = info_window {
