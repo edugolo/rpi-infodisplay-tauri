@@ -169,27 +169,10 @@ async fn main() {
             drop(info_window);
 
             // Start display schedule if configured
-            // Start display schedule if configured (setup closure is not async, use block_on)
-            let rt = tokio::runtime::Handle::current();
-            let schedule_for_display = Arc::new(RwLock::new(
-                rt.block_on(config.read()).display_schedule.clone(),
-            ));
-            {
-                let cfg = rt.block_on(config.read());
-                if let Some(ref schedule) = cfg.display_schedule {
-                    if schedule.enabled {
-                        log::info!(
-                            "[display] Schedule enabled: on={}, off={}, days={:?}",
-                            schedule.on.as_deref().unwrap_or("N/A"),
-                            schedule.off.as_deref().unwrap_or("N/A"),
-                            schedule.days
-                        );
-                    }
-                }
-            }
+            // Init display schedule + controller connection in async context
+            let schedule_for_display = Arc::new(RwLock::new(None));
             display::spawn_scheduler(schedule_for_display.clone());
 
-            // Spawn the controller connection task
             let config_for_connect = config.clone();
             let system_info_for_connect = system_info.clone();
             let app_handle_for_connect = app_handle.clone();
@@ -197,6 +180,22 @@ async fn main() {
             let schedule_for_remote = schedule_for_display.clone();
 
             tokio::spawn(async move {
+                // Read initial schedule value now that we're async
+                {
+                    let cfg = config_for_connect.read().await;
+                    let mut sh = schedule_for_remote.write().await;
+                    *sh = cfg.display_schedule.clone();
+                    if let Some(ref schedule) = cfg.display_schedule {
+                        if schedule.enabled {
+                            log::info!(
+                                "[display] Schedule enabled: on={}, off={}, days={:?}",
+                                schedule.on.as_deref().unwrap_or("N/A"),
+                                schedule.off.as_deref().unwrap_or("N/A"),
+                                schedule.days
+                            );
+                        }
+                    }
+                }
                 connect_to_controller(
                     config_for_connect,
                     system_info_for_connect,
