@@ -84,6 +84,7 @@ async fn main() {
             if fullscreen {
                 if let Ok(output) = std::process::Command::new("xrandr")
                     .arg("--current")
+                    .env("DISPLAY", ":0")
                     .output()
                 {
                     let xrandr_out = String::from_utf8_lossy(&output.stdout);
@@ -104,6 +105,8 @@ async fn main() {
                             break;
                         }
                     }
+                } else {
+                    log::warn!("[kiosk] xrandr failed, falling back to default window size");
                 }
             }
 
