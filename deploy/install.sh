@@ -319,6 +319,7 @@ Description=Start rpi-infodisplay on schedule (weekdays)
 [Timer]
 OnCalendar=Mon..Fri ${on_hour}:${on_min}:00
 Persistent=true
+Unit=rpi-infodisplay.service
 
 [Install]
 WantedBy=timers.target
