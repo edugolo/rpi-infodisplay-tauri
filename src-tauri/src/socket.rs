@@ -1,3 +1,4 @@
+use crate::config::AppConfig;
 use crate::signing;
 use rust_socketio::Payload;
 use serde_json::Value;
@@ -37,6 +38,7 @@ impl KioskSocket {
         on_config_update: Box<dyn Fn(Value) + Send + Sync>,
         on_connected: Box<dyn Fn() + Send + Sync>,
         _on_disconnected: Box<dyn Fn(String) + Send + Sync>,
+        config: Arc<RwLock<AppConfig>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let origin = url::Url::parse(&self.controller_url)?
             .origin()
@@ -60,6 +62,7 @@ impl KioskSocket {
         // Move callbacks into 'static closures for the blocking thread
         let on_command_fn: Arc<dyn Fn(Value) + Send + Sync> = Arc::from(on_command);
         let on_config_fn: Arc<dyn Fn(Value) + Send + Sync> = Arc::from(on_config_update);
+        let config_for_request = config.clone();
 
         // Spawn the blocking connect on a dedicated thread so rust_socketio's
         // internal runtime lives and dies outside the async context.
@@ -104,6 +107,16 @@ impl KioskSocket {
                                 log::info!("[socket] Config update received");
                                 cb(val.clone());
                             }
+                        }
+                    }
+                })
+                .on("kiosk:config:request", {
+                    let cfg = config_for_request.clone();
+                    move |_payload, socket| {
+                        log::info!("[socket] Config requested by server — sending sync");
+                        let config_json = serde_json::to_value(&*cfg.blocking_read()).unwrap_or_default();
+                        if let Err(e) = socket.emit("kiosk:config:sync", config_json) {
+                            log::error!("[socket] Failed to emit config sync: {}", e);
                         }
                     }
                 })

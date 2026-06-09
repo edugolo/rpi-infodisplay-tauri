@@ -582,6 +582,7 @@ async fn start_full_operation(
             Box::new(socket_on_config),
             Box::new(socket_on_connected),
             Box::new(socket_on_disconnected),
+            config.clone(),
         )
         .await
     {
