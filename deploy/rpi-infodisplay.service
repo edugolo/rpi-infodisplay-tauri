@@ -17,5 +17,10 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=kiosk-display
 
+# On shutdown, stop the service cleanly. The app's scheduler also
+# self-invokes "systemctl stop" at the scheduled off-time (see display.rs).
+# CEC Standby is sent by the app before stopping when available.
+ExecStop=/usr/bin/journalctl --flush
+
 [Install]
 WantedBy=multi-user.target

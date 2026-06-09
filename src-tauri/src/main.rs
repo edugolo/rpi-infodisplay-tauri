@@ -193,6 +193,9 @@ async fn main() {
             drop(main_window);
             drop(info_window);
 
+            // Initialise display power management (CEC probe + wake)
+            display::init();
+
             // Start display schedule if configured
             // Init display schedule + controller connection in async context
             let schedule_for_display = Arc::new(RwLock::new(None));
