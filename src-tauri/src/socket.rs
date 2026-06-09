@@ -3,6 +3,7 @@ use crate::signing;
 use rust_socketio::Payload;
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -88,6 +89,9 @@ impl KioskSocket {
                 let cfg_path_req = config_path_for_request.clone();
                 let did = device_id.clone();
 
+                // Channel so the error handler can wake the main thread
+                let (error_tx, error_rx) = mpsc::channel::<()>();
+
                 match rust_socketio::ClientBuilder::new(&origin_for_thread)
                     .auth(auth)
                     .reconnect(true)
@@ -148,17 +152,25 @@ impl KioskSocket {
                             }
                         }
                     })
-                    .on("error", |err, _| {
-                        log::error!("[socket] Error: {:?}", err);
+                    .on("error", {
+                        let et = error_tx.clone();
+                        move |err, _| {
+                            log::error!("[socket] Error: {:?}", err);
+                            // Signal the main thread to reconnect
+                            let _ = et.send(());
+                        }
                     })
                     .connect()
                 {
                     Ok(_socket) => {
                         log::info!("[socket] Socket connected, thread keeping client alive");
-                        // Park until the socket drops (e.g. unrecoverable transport error),
-                        // then retry the whole connection.
-                        std::thread::park();
-                        log::warn!("[socket] Socket dropped — reconnecting in 5s");
+                        // Block until an error occurs (error handler sends on the channel)
+                        // or the socket drops (recv returns Err).
+                        let reason = match error_rx.recv() {
+                            Ok(()) => "error event received",
+                            Err(_) => "sender dropped (socket disconnected)",
+                        };
+                        log::warn!("[socket] Socket reconnecting — {}", reason);
                         std::thread::sleep(Duration::from_secs(5));
                     }
                     Err(e) => {
