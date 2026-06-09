@@ -37,9 +37,11 @@ async fn probe_cec() -> bool {
         .args([
             "--device",
             "/dev/cec0",
+            "--to",
+            "0",
             "--give-device-power-status",
             "--timeout",
-            "1500",
+            "2000",
         ])
         .output()
         .await;
@@ -68,7 +70,7 @@ async fn probe_cec() -> bool {
 /// Send CEC Standby to the TV. Fire-and-forget.
 async fn cec_standby() {
     let result = tokio::process::Command::new("cec-ctl")
-        .args(["--device", "/dev/cec0", "--standby"])
+        .args(["--device", "/dev/cec0", "--to", "0", "--standby"])
         .output()
         .await;
 
@@ -91,13 +93,13 @@ async fn cec_standby() {
 /// Send CEC Image View On (wake) to the TV. Fire-and-forget.
 async fn cec_wake() {
     let result = tokio::process::Command::new("cec-ctl")
-        .args(["--device", "/dev/cec0", "--image-view-on"])
+        .args(["--device", "/dev/cec0", "--to", "0", "--image-view-on"])
         .output()
         .await;
 
     match result {
         Ok(out) if out.status.success() => {
-            log::info!("[display/cec] Sent IMAGE_VIEW_ON (wake)");
+            log::info!("[display/cec] Sent IMAGE_VIEW_ON (wake) to TV");
         }
         Ok(out) => {
             log::warn!(
