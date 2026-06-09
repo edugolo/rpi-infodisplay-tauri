@@ -617,6 +617,15 @@ async fn apply_remote_config(
         if let Some(handle) = schedule_handle {
             let mut sh = handle.write().await;
             *sh = cfg.display_schedule.clone();
+            if let Some(ref sched) = *sh {
+                log::info!(
+                    "[controller] Schedule updated: enabled={}, on={}, off={}, days={:?}",
+                    sched.enabled,
+                    sched.on.as_deref().unwrap_or("none"),
+                    sched.off.as_deref().unwrap_or("none"),
+                    sched.days
+                );
+            }
         }
 
         // Apply immediate effects

@@ -147,6 +147,15 @@ pub fn init() {
 /// 2. Stop the systemd service — this kills cage + the app cleanly.
 ///    When the service starts next time (boot or systemd timer), cage does a
 ///    fresh DRM modeset, avoiding swapchain issues.
+/// Send CEC wake (Image View On) if available.
+/// Called by the scheduler when transitioning from off→on.
+pub async fn power_on() {
+    if CEC_AVAILABLE.load(Ordering::Relaxed) {
+        log::info!("[display] CEC available — sending wake");
+        cec_wake().await;
+    }
+}
+
 pub async fn power_off() {
     // Give the CEC probe a moment to complete (it was started in init())
     if !CEC_PROBED.load(Ordering::Relaxed) {
@@ -159,10 +168,12 @@ pub async fn power_off() {
     }
 
     if CEC_AVAILABLE.load(Ordering::Relaxed) {
+        log::info!("[display] CEC available — sending standby, keeping service alive");
         cec_standby().await;
+        return;
     }
 
-    log::info!("[display] Stopping service (power off)");
+    log::info!("[display] CEC not available — stopping service (power off)");
 
     // Spawn systemctl stop — this will kill cage which kills us.
     // Don't await: we'll be killed before it completes.
@@ -180,15 +191,20 @@ pub async fn power_off() {
 
 /// Spawn the display-schedule background task.
 ///
+/// Spawn the display-schedule background task.
+///
 /// Every 30 seconds it checks whether the display should be on according to
-/// the config-based schedule. When the schedule says "off", it calls
-/// [`power_off`], which sends CEC Standby (if available) and then stops the
-/// service.
+/// the config-based schedule. When the schedule says "off" it calls
+/// [`power_off`] (CEC standby if available, or service stop). When the
+/// schedule says "on" after being off it calls [`power_on`] (CEC wake).
 pub fn spawn_scheduler(schedule: Arc<RwLock<Option<DisplaySchedule>>>) {
     tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(30));
         // First tick fires immediately.
         interval.tick().await;
+
+        // Track the last action so we don't spam standby/wake every tick
+        let mut was_off = false;
 
         loop {
             interval.tick().await;
@@ -196,17 +212,36 @@ pub fn spawn_scheduler(schedule: Arc<RwLock<Option<DisplaySchedule>>>) {
             let sched = schedule.read().await;
             if let Some(ref s) = *sched {
                 if !s.enabled {
+                    was_off = false;
                     continue;
                 }
 
                 let should_be_on = should_display_be_on(s);
-                if !should_be_on {
-                    drop(sched);
-                    power_off().await;
-                    // If power_off returns (it usually doesn't because the
-                    // service is stopped), we break out of the loop.
-                    break;
+                if was_off != !should_be_on {
+                    log::debug!(
+                        "[display/scheduler] Transition: was_off={}, should_be_on={}, schedule=on={} off={}",
+                        was_off, should_be_on,
+                        s.on.as_deref().unwrap_or("none"),
+                        s.off.as_deref().unwrap_or("none")
+                    );
                 }
+
+                if !should_be_on {
+                    if !was_off {
+                        was_off = true;
+                        drop(sched);
+                        power_off().await;
+                        // If CEC is not available, power_off stops the service
+                        // and we never come back here. If CEC is available,
+                        // we return and keep checking.
+                    }
+                } else if was_off {
+                    was_off = false;
+                    drop(sched);
+                    power_on().await;
+                }
+            } else {
+                was_off = false;
             }
         }
     });
