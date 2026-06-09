@@ -95,7 +95,7 @@ impl AppConfig {
                             }
                         }
                     }
-                    "displayType" => {
+                    "displayType" | "display_type" => {
                         let new_val = value.as_str().map(|s| s.to_string());
                         if self.display_type != new_val {
                             self.display_type = new_val;
@@ -125,7 +125,7 @@ impl AppConfig {
                             }
                         }
                     }
-                    "zoomFactor" => {
+                    "zoomFactor" | "zoom_factor" => {
                         if let Some(f) = value.as_f64() {
                             if self.zoom_factor != Some(f) {
                                 self.zoom_factor = Some(f);
@@ -133,14 +133,14 @@ impl AppConfig {
                             }
                         }
                     }
-                    "refreshCronExpression" => {
+                    "refreshCronExpression" | "refresh_cron_expression" => {
                         let new_val = value.as_str().map(|s| s.to_string());
                         if self.refresh_cron_expression != new_val {
                             self.refresh_cron_expression = new_val;
                             changed = true;
                         }
                     }
-                    "displaySchedule" => {
+                    "displaySchedule" | "display_schedule" => {
                         if let Ok(new_val) =
                             serde_json::from_value::<DisplaySchedule>(value.clone())
                         {
