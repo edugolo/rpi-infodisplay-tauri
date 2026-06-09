@@ -583,6 +583,7 @@ async fn start_full_operation(
             Box::new(socket_on_connected),
             Box::new(socket_on_disconnected),
             config.clone(),
+            config_path.clone(),
         )
         .await
     {

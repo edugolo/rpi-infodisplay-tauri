@@ -2,6 +2,7 @@ use crate::config::AppConfig;
 use crate::signing;
 use rust_socketio::Payload;
 use serde_json::Value;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -39,6 +40,7 @@ impl KioskSocket {
         on_connected: Box<dyn Fn() + Send + Sync>,
         _on_disconnected: Box<dyn Fn(String) + Send + Sync>,
         config: Arc<RwLock<AppConfig>>,
+        config_path: PathBuf,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let origin = url::Url::parse(&self.controller_url)?
             .origin()
@@ -63,6 +65,7 @@ impl KioskSocket {
         let on_command_fn: Arc<dyn Fn(Value) + Send + Sync> = Arc::from(on_command);
         let on_config_fn: Arc<dyn Fn(Value) + Send + Sync> = Arc::from(on_config_update);
         let config_for_request = config.clone();
+        let config_path_for_request = config_path.clone();
 
         // Spawn the blocking connect on a dedicated thread so rust_socketio's
         // internal runtime lives and dies outside the async context.
@@ -112,9 +115,16 @@ impl KioskSocket {
                 })
                 .on("kiosk:config:request", {
                     let cfg = config_for_request.clone();
+                    let cfg_path = config_path_for_request.clone();
                     move |_payload, socket| {
                         log::info!("[socket] Config requested by server — sending sync");
-                        let config_json = serde_json::to_value(&*cfg.blocking_read()).unwrap_or_default();
+                        // Read the raw config.json file to preserve all fields
+                        let config_json = std::fs::read_to_string(&cfg_path)
+                            .ok()
+                            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                            .unwrap_or_else(|| {
+                                serde_json::to_value(&*cfg.blocking_read()).unwrap_or_default()
+                            });
                         if let Err(e) = socket.emit("kiosk:config:sync", config_json) {
                             log::error!("[socket] Failed to emit config sync: {}", e);
                         }
