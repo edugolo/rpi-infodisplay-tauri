@@ -51,6 +51,7 @@ CONF_NAME=""
 CONF_LOCATION=""
 CONF_CONTROLLER=""
 CONF_URL=""
+SCHEDULE_ENABLED=true
 SCHEDULE_ON="09:00"
 SCHEDULE_OFF="16:00"
 
@@ -68,6 +69,8 @@ while [[ $# -gt 0 ]]; do
         --url)              CONF_URL="$2"; shift 2 ;;
         --on-time)          SCHEDULE_ON="$2"; shift 2 ;;
         --off-time)         SCHEDULE_OFF="$2"; shift 2 ;;
+        --schedule-enabled) SCHEDULE_ENABLED="$2"; shift 2 ;;
+        --no-schedule)      SCHEDULE_ENABLED=false ;;
         -h|--help)
             echo "Usage: sudo bash install.sh [OPTIONS]"
             echo ""
@@ -78,8 +81,11 @@ while [[ $# -gt 0 ]]; do
             echo "  --location LOC     Display location"
             echo "  --controller URL   Controller URL"
             echo "  --url URL          Start URL (default: https://edugo.be)"
-            echo "  --on-time HH:MM    Display on time (default: 09:00)"
-            echo "  --off-time HH:MM   Display off time (default: 16:00)"
+            echo "  --on-time HH:MM    Display CEC-on time (default: 09:00)"
+            echo "  --off-time HH:MM   Display CEC-off time (default: 16:00)"
+            echo "  --schedule-enabled true|false"
+            echo "                     Enable display schedule (default: true)"
+            echo "  --no-schedule      Shortcut for --schedule-enabled=false"
             echo "  --dir DIR          Install dir (default: /opt/rpi-infodisplay)"
             echo "  --user USER        Service user (default: current user)"
             exit 0
@@ -223,7 +229,7 @@ fi
 CONF_URL="${CONF_URL:-https://edugo.be}"
 
 info "Config: name='${CONF_NAME}' location='${CONF_LOCATION}' controller='${CONF_CONTROLLER}' url='${CONF_URL}'"
-info "Schedule: on=${SCHEDULE_ON} off=${SCHEDULE_OFF} (weekdays)"
+info "Schedule: on=${SCHEDULE_ON} off=${SCHEDULE_OFF} (weekdays), enabled=${SCHEDULE_ENABLED}"
 
 cat > "${INSTALL_DIR}/config.json" << CONFEOF
 {
@@ -235,7 +241,7 @@ cat > "${INSTALL_DIR}/config.json" << CONFEOF
   "frame": false,
   "zoomFactor": 1.0,
   "displaySchedule": {
-    "enabled": true,
+    "enabled": ${SCHEDULE_ENABLED},
     "on": "${SCHEDULE_ON}",
     "off": "${SCHEDULE_OFF}",
     "days": ["mon", "tue", "wed", "thu", "fri"]
@@ -324,7 +330,11 @@ echo "  Config:  ${INSTALL_DIR}/config.json"
 echo "  Logs:    journalctl -u rpi-infodisplay -f"
 echo "  Restart: sudo systemctl restart rpi-infodisplay"
 echo ""
-echo "  Display schedule: ${SCHEDULE_ON} – ${SCHEDULE_OFF} (weekdays)"
+if [[ "${SCHEDULE_ENABLED}" == "true" ]]; then
+  echo "  Display schedule: ${SCHEDULE_ON} – ${SCHEDULE_OFF} weekdays (CEC)"
+else
+  echo "  Display schedule: disabled — screen always on via CEC"
+fi
 echo "  Power control:    CEC (app-controlled, no systemd timers)"
 echo ""
 echo -e "${YELLOW}  Reboot to activate: sudo reboot${NC}"
