@@ -89,7 +89,7 @@ Create `config.json` in the working directory:
 
 ### Display Schedule
 
-The `displaySchedule` section controls automatic power on/off of the connected display:
+The `displaySchedule` section controls CEC-based automatic power on/off of the connected display:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -98,16 +98,20 @@ The `displaySchedule` section controls automatic power on/off of the connected d
 | `off` | `string` | Time to power off (HH:MM, 24h format) |
 | `days` | `string[]` | Days to apply (e.g. `["mon","fri"]`). Empty = every day |
 
-Power-off uses **wlr-randr** to disable the GPU output signal — compatible with any monitor/TV on wlroots compositors (cage). The display enters standby when it loses signal.
-
-Requires `wlr-randr` (from the `wlr-randr` package).
+The service runs 24/7 — only the screen is powered via HDMI-CEC. At the configured `on` time the app sends `IMAGE_VIEW_ON`, at `off` time it sends `STANDBY`. No systemd timers are involved.
 
 ## Key Storage
 
-Keys and device ID are stored in `~/.config/rpi-infodisplay/`:
+The service runs as root, so keys and device ID are stored in `/root/.config/rpi-infodisplay/`:
 - `device.key` — Ed25519 private key (PEM)
 - `device.pub` — Ed25519 public key (PEM)
 - `device-id` — UUID assigned by the controller
+
+To reset the identity (re-register as a new device):
+```bash
+sudo rm -rf /root/.config/rpi-infodisplay/
+sudo reboot
+```
 
 ## Deployment
 
@@ -129,6 +133,24 @@ curl -fsSL https://raw.githubusercontent.com/edugolo/rpi-infodisplay-tauri/main/
   --url "https://app.edugo.be/lochristi/display"
 ```
 
+All install options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--version TAG` | — | Download from a specific GitHub release tag |
+| `--latest` | — | Download the latest GitHub release |
+| `--binary PATH` | — | Use a local binary instead of downloading |
+| `--name NAME` | — | Display name (shown in controller) |
+| `--location LOC` | — | Physical location label |
+| `--controller URL` | — | Controller API base URL |
+| `--url URL` | `https://edugo.be` | Start URL displayed in the kiosk |
+| `--on-time HH:MM` | `09:00` | CEC-on time (screen wake) |
+| `--off-time HH:MM` | `16:00` | CEC-off time (screen standby) |
+| `--schedule-enabled true\|false` | `true` | Enable/disable display schedule |
+| `--no-schedule` | — | Shortcut for `--schedule-enabled=false` |
+| `--dir DIR` | `/opt/rpi-infodisplay` | Install directory |
+| `--user USER` | `pi` | System user for runtime dirs |
+
 Then reboot:
 
 ```bash
@@ -139,9 +161,10 @@ What the script does:
 1. Installs all system dependencies (cage, WebKitGTK, GPU drivers, fonts)
 2. Downloads the latest binary from GitHub Releases
 3. Applies Raspberry Pi GPU optimizations (`gpu_mem`, `vc4-kms-v3d`)
-4. Sets up the systemd service (cage + app, auto-starts on boot)
+4. Creates systemd service — starts on boot, runs 24/7 (screen power is CEC-only)
 5. Writes config to `/opt/rpi-infodisplay/config.json`
-6. Enables seatd for DRM access
+6. Configures **autologin** on tty1 — cage needs an active console session to bind to seatd
+7. Enables seatd for DRM access
 
 ### Updating an existing Pi
 
