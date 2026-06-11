@@ -282,6 +282,12 @@ WorkingDirectory=${INSTALL_DIR}
 Environment=WEBKIT_DISABLE_DMABUF_RENDERER=1
 Environment=XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}
 Environment=WLR_LIBINPUT_NO_DEVICES=1
+Environment=GDK_BACKEND=wayland
+Environment=CLUTTER_BACKEND=wayland
+
+# GDK_BACKEND=wayland forces WebKit/GTK to use Wayland directly.
+# Without it, the app falls back to X11 under cage, which spawns
+# Xwayland and pegs a CPU core at 100% on the Pi 3.
 ExecStartPre=/bin/sleep 8
 ExecStart=/usr/bin/cage -d -- ${INSTALL_DIR}/rpi-infodisplay
 Restart=on-failure
@@ -308,6 +314,26 @@ for unit in rpi-infodisplay-start.timer rpi-infodisplay-stop.timer rpi-infodispl
     rm -f "/etc/systemd/system/${unit}"
 done
 systemctl daemon-reload
+
+# ── Step 6: Configure autologin ───────────────────────────────────────────────
+#
+# cage (Wayland compositor) connects to seatd, which is VT-bound. If no one
+# is logged in at the console, seatd has no active VT session and returns
+# "No clients on seat0 to activate". cage then fails with "Unable to open
+# Wayland socket: Invalid argument" — and keeps retrying forever without
+# ever succeeding because the session never becomes active on its own.
+#
+# Auto-login creates an active logind+seatd session at boot, so cage can
+# bind to it immediately (or after the 8s ExecStartPre sleep).
+info "Configuring autologin for ${KIOSK_USER} on tty1..."
+mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << AUTOEOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty -o "-p -f -- \\u" --noclear --autologin ${KIOSK_USER} --noclear - \$TERM
+AUTOEOF
+systemctl daemon-reload
+ok "Autologin for ${KIOSK_USER} on tty1 configured."
 
 # ── Step 7: Pre-warm CEC on first install ────────────────────────────────────
 if command -v cec-ctl &>/dev/null && [[ -c /dev/cec0 ]]; then
