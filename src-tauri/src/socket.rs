@@ -81,6 +81,7 @@ impl KioskSocket {
                     "deviceId": device_id,
                     "timestamp": timestamp,
                     "signature": signature,
+                    "ip": crate::system_info::get_current_ip(),
                 });
 
                 let on_command = on_command_fn.clone();
