@@ -52,6 +52,15 @@ fn get_kernel_version() -> Option<String> {
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Get the current IP address of the default interface at runtime.
+pub fn get_current_ip() -> String {
+    if let Some((_, ip)) = get_network_info() {
+        ip
+    } else {
+        "unknown".to_string()
+    }
+}
+
 fn get_network_info() -> Option<(String, String)> {
     // Use `ip` command to find default interface
     let output = std::process::Command::new("ip")

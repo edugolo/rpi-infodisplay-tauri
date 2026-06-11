@@ -155,6 +155,7 @@ pub fn spawn_update_checker(install_dir: std::path::PathBuf) {
 /// Command type with its ack function
 type AckFn = Arc<dyn Fn(&str, &str, Option<&str>) + Send + Sync>;
 type ScreenshotFn = Arc<dyn Fn(&str, &[u8]) + Send + Sync>;
+type InfoFn = Arc<dyn Fn(&serde_json::Value) + Send + Sync>;
 
 /// Command dispatcher — executes commands received from the controller.
 pub struct CommandDispatcher {
@@ -163,6 +164,7 @@ pub struct CommandDispatcher {
     private_key_pem: String,
     ack_fn: RwLock<Option<AckFn>>,
     screenshot_fn: RwLock<Option<ScreenshotFn>>,
+    info_fn: RwLock<Option<InfoFn>>,
 }
 
 impl CommandDispatcher {
@@ -177,6 +179,7 @@ impl CommandDispatcher {
             private_key_pem,
             ack_fn: RwLock::new(None),
             screenshot_fn: RwLock::new(None),
+            info_fn: RwLock::new(None),
         }
     }
 
@@ -186,6 +189,10 @@ impl CommandDispatcher {
 
     pub async fn set_screenshot_fn(&self, f: Option<ScreenshotFn>) {
         *self.screenshot_fn.write().await = f;
+    }
+
+    pub async fn set_info_fn(&self, f: Option<InfoFn>) {
+        *self.info_fn.write().await = f;
     }
 
     /// Dispatch a batch of commands
@@ -213,6 +220,7 @@ impl CommandDispatcher {
             "identify" => self.cmd_identify(app_handle).await,
             "reboot" => self.cmd_reboot().await,
             "os-update" => self.cmd_os_update().await,
+            "info" => self.cmd_info(app_handle).await,
             "update" => self.cmd_update(&payload).await,
             "display-substitution" | "display-announcement" => {
                 self.cmd_navigate(&payload, app_handle).await
@@ -310,6 +318,37 @@ impl CommandDispatcher {
             &png_data,
         )
         .await?;
+
+        Ok(())
+    }
+
+    async fn cmd_info(&self, app_handle: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let config = self.config.read().await;
+        let current_url = app_handle
+            .get_webview_window("main")
+            .and_then(|w| w.url().ok())
+            .map(|u| u.to_string())
+            .unwrap_or_default();
+
+        let info = serde_json::json!({
+            "deviceId": self.device_id,
+            "appVersion": env!("CARGO_PKG_VERSION"),
+            "ip": crate::system_info::get_current_ip(),
+            "uptime": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            "currentUrl": current_url,
+            "config": &*config,
+        });
+        drop(config);
+
+        log::info!("[commands] Device info requested via command");
+
+        // Emit via Socket.IO if connected
+        if let Some(info_fn) = self.info_fn.read().await.as_ref() {
+            info_fn(&info);
+        }
 
         Ok(())
     }

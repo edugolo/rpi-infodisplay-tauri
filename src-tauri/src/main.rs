@@ -515,11 +515,9 @@ async fn start_full_operation(
     let hb_device_id = device_id.to_string();
     let hb_pk = private_key_pem.to_string();
     let hb_app = app_handle.clone();
-    let hb_system_ip = system_info["ip"].as_str().unwrap_or("unknown").to_string();
 
     let get_status = {
         let app = hb_app.clone();
-        let ip = hb_system_ip.clone();
         move || {
             let current_url = app.get_webview_window("main")
                 .and_then(|w| w.url().ok())
@@ -532,7 +530,7 @@ async fn start_full_operation(
             serde_json::json!({
                 "uptime": uptime,
                 "currentUrl": current_url,
-                "ip": ip,
+                "ip": rpi_infodisplay::system_info::get_current_ip(),
             })
         }
     };

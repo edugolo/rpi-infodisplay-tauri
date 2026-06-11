@@ -1,5 +1,6 @@
 use crate::api;
 use crate::config::AppConfig;
+use crate::system_info;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -49,13 +50,19 @@ impl Heartbeat {
         };
 
         let status = (self.get_status)();
+        let cfg = self.config.read().await;
         let data = serde_json::json!({
             "timestamp": chrono::Utc::now().to_rfc3339(),
             "uptime": status.get("uptime").unwrap_or(&serde_json::json!(0)),
             "currentUrl": status.get("currentUrl"),
-            "ip": status.get("ip"),
+            "ip": system_info::get_current_ip(),
             "appVersion": env!("CARGO_PKG_VERSION"),
+            "name": cfg.name,
+            "location": cfg.location,
+            "displaySchedule": cfg.display_schedule,
+            "vacationMode": cfg.vacation_mode,
         });
+        drop(cfg);
 
         api::heartbeat(&controller, &self.device_id, &self.private_key_pem, &data).await?;
         log::debug!("[heartbeat] Sent");
