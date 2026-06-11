@@ -1,8 +1,156 @@
 use crate::api;
 use serde_json::Value;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 use tokio::sync::RwLock;
+
+/// Set to true while an update is in progress to prevent concurrent updates.
+static UPDATE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// Current app version, baked in at compile time.
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// GitHub repository for release binary downloads.
+const GITHUB_REPO: &str = "edugolo/rpi-infodisplay-tauri";
+
+/// Check the latest release from GitHub and return the tag name.
+pub async fn check_latest_version() -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
+    let client = reqwest::Client::builder()
+        .user_agent("rpi-infodisplay")
+        .build()?;
+    let resp = client.get(&url).send().await?;
+    let data: serde_json::Value = resp.json().await?;
+    let tag = data["tag_name"]
+        .as_str()
+        .ok_or("No tag_name in response")?
+        .to_string();
+    Ok(tag)
+}
+
+/// Download binary for the current architecture from a GitHub release.
+async fn download_release(tag: &str, dest: &std::path::Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let arch = if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        "x86_64"
+    };
+    let binary_name = format!("rpi-infodisplay-{}", arch);
+    let url = format!(
+        "https://github.com/{}/releases/download/{}/{}",
+        GITHUB_REPO, tag, binary_name
+    );
+
+    log::info!("[update] Downloading {} from {}", binary_name, url);
+
+    let client = reqwest::Client::builder()
+        .user_agent("rpi-infodisplay")
+        .build()?;
+    let response = client.get(&url).send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("Download failed with HTTP {}", status).into());
+    }
+
+    let bytes = response.bytes().await?;
+    tokio::fs::write(dest, &bytes).await?;
+
+    log::info!("[update] Downloaded {} bytes to {:?}", bytes.len(), dest);
+    Ok(())
+}
+
+/// Verify that a file looks like a valid aarch64 ELF binary.
+fn verify_elf(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let data = std::fs::read(path)?;
+    if data.len() < 64 {
+        return Err("File too small to be an ELF binary".into());
+    }
+    // Check ELF magic: \x7f E L F
+    if data[0..4] != [0x7f, 0x45, 0x4c, 0x46] {
+        return Err("Not a valid ELF binary (bad magic)".into());
+    }
+    // Check 64-bit (EI_CLASS = 2)
+    if data[4] != 2 {
+        return Err("Not a 64-bit ELF".into());
+    }
+    // Check aarch64 (EM_AARCH64 = 183) on little-endian systems
+    if cfg!(target_arch = "aarch64") && data[18] != 0xb7 {
+        log::warn!("[update] Binary architecture byte: expected 0xb7 (AArch64), got 0x{:x}", data[18]);
+    }
+    Ok(())
+}
+
+/// Perform the actual binary swap and restart.
+async fn apply_update(install_dir: &std::path::Path, downloaded: &std::path::Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let target = install_dir.join("rpi-infodisplay");
+    let backup = install_dir.join("rpi-infodisplay.bak");
+
+    // Backup current binary
+    if target.exists() {
+        tokio::fs::copy(&target, &backup).await?;
+        log::info!("[update] Backed up current binary to {:?}", backup);
+    }
+
+    // Replace with new binary
+    tokio::fs::copy(downloaded, &target).await?;
+    tokio::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).await?;
+    log::info!("[update] Replaced binary at {:?}", target);
+
+    // Trigger restart
+    log::info!("[update] Restarting service...");
+    let _ = tokio::process::Command::new("systemctl")
+        .args(["restart", "rpi-infodisplay"])
+        .spawn();
+
+    Ok(())
+}
+
+/// Spawn a background task that checks GitHub for newer releases every 6 hours.
+pub fn spawn_update_checker(install_dir: std::path::PathBuf) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
+        // First check after 5 minutes (give the device time to boot)
+        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+
+        loop {
+            interval.tick().await;
+
+            log::info!("[update] Periodic check: looking for newer version...");
+            match check_latest_version().await {
+                Ok(latest_tag) => {
+                    let current = format!("v{}", APP_VERSION);
+                    if latest_tag > current {
+                        log::info!(
+                            "[update] New version available: {} (current: {}). Auto-updating...",
+                            latest_tag, current
+                        );
+                        let tmp = std::env::temp_dir().join("rpi-infodisplay-update");
+                        if let Err(e) = download_release(&latest_tag, &tmp).await {
+                            log::error!("[update] Download failed: {}", e);
+                            continue;
+                        }
+                        if let Err(e) = verify_elf(&tmp) {
+                            log::error!("[update] Verification failed: {}", e);
+                            continue;
+                        }
+                        if let Err(e) = apply_update(&install_dir, &tmp).await {
+                            log::error!("[update] Apply failed: {}", e);
+                        }
+                        // If apply succeeded, we don't return — the restart kills us.
+                    } else {
+                        log::debug!("[update] Already up-to-date ({} == {})", current, latest_tag);
+                    }
+                }
+                Err(e) => {
+                    log::error!("[update] Failed to check latest version: {}", e);
+                }
+            }
+        }
+    });
+}
 
 /// Command type with its ack function
 type AckFn = Arc<dyn Fn(&str, &str, Option<&str>) + Send + Sync>;
@@ -65,6 +213,7 @@ impl CommandDispatcher {
             "identify" => self.cmd_identify(app_handle).await,
             "reboot" => self.cmd_reboot().await,
             "os-update" => self.cmd_os_update().await,
+            "update" => self.cmd_update(&payload).await,
             "display-substitution" | "display-announcement" => {
                 self.cmd_navigate(&payload, app_handle).await
             }
@@ -188,6 +337,32 @@ impl CommandDispatcher {
         tokio::process::Command::new("sudo")
             .args(["apt", "update"])
             .spawn()?;
+        Ok(())
+    }
+
+    async fn cmd_update(&self, payload: &Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if UPDATE_IN_PROGRESS.swap(true, Ordering::Relaxed) {
+            return Err("Update already in progress".into());
+        }
+
+        let version = payload
+            .get("version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("latest");
+        let tag = if version == "latest" {
+            check_latest_version().await?
+        } else {
+            format!("v{}", version.trim_start_matches('v'))
+        };
+
+        log::info!("[update] Remote update triggered: version={}", tag);
+
+        let tmp = std::env::temp_dir().join("rpi-infodisplay-update");
+        download_release(&tag, &tmp).await?;
+        verify_elf(&tmp)?;
+        apply_update(&std::path::PathBuf::from("/opt/rpi-infodisplay"), &tmp).await?;
+
+        // apply_update triggers a systemctl restart — we won't return
         Ok(())
     }
 

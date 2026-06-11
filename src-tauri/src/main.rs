@@ -208,6 +208,11 @@ async fn main() {
             let vacation_mode = Arc::new(RwLock::new(app_config.vacation_mode.unwrap_or(false)));
             display::spawn_scheduler(schedule_for_display.clone(), vacation_mode.clone());
 
+            // Start background update checker (checks GitHub every 6 hours)
+            rpi_infodisplay::commands::spawn_update_checker(
+                std::path::PathBuf::from("/opt/rpi-infodisplay"),
+            );
+
             let config_for_connect = config.clone();
             let system_info_for_connect = system_info.clone();
             let app_handle_for_connect = app_handle.clone();
