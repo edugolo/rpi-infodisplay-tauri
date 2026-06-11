@@ -124,6 +124,14 @@ async fn cec_wake() {
 /// display if CEC is available.
 pub fn init() {
     tokio::spawn(async {
+        // Configure CEC logical address (not persistent across reboots).
+        // Without this, CEC commands are sent but the TV ignores them because
+        // the adapter has no identity on the HDMI bus.
+        let _ = tokio::process::Command::new("cec-ctl")
+            .args(["--device", "/dev/cec0", "--playback"])
+            .output()
+            .await;
+
         let available = probe_cec().await;
         CEC_AVAILABLE.store(available, Ordering::Relaxed);
         CEC_PROBED.store(true, Ordering::Relaxed);
