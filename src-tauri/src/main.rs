@@ -122,7 +122,19 @@ async fn main() {
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .visible(true)
-                .background_color(tauri::webview::Color(0, 0, 0, 255));
+                .background_color(tauri::webview::Color(0, 0, 0, 255))
+                // Hide cursor on EVERY page load (cage/kiosk mode).
+                // Using on_page_load instead of a post-build eval() ensures
+                // the CSS survives the external URL navigation — the initial
+                // eval() runs before the page loads and gets wiped when the
+                // real document replaces the blank one.
+                .on_page_load(|window, payload| {
+                    if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                        let _ = window.eval(
+                            "const s = document.createElement('style'); s.textContent = '* { cursor: none !important; }'; document.head.appendChild(s);"
+                        );
+                    }
+                });
 
             if let Some((w, h)) = screen_size {
                 builder = builder.inner_size(w as f64, h as f64).position(0.0, 0.0);
@@ -139,13 +151,6 @@ async fn main() {
                     log::warn!("[kiosk] Failed to set zoom: {}", e);
                 }
             });
-
-            // Inject CSS to hide cursor
-            if let Err(e) = main_window.eval(
-                "const s = document.createElement('style'); s.textContent = '* { cursor: none !important; }'; document.head.appendChild(s);"
-            ) {
-                log::warn!("[kiosk] CSS injection failed: {}", e);
-            }
 
             // Create info overlay window (shown initially with device info)
             let mut info_builder = tauri::WebviewWindowBuilder::new(

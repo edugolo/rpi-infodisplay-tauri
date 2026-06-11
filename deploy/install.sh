@@ -263,18 +263,18 @@ info "Installing systemd service..."
 cat > /etc/systemd/system/rpi-infodisplay.service << SERVICEEOF
 [Unit]
 Description=Edugo Kiosk Display (Tauri)
-After=seatd.service network-online.target graphical.target
-Wants=seatd.service network-online.target graphical.target
+After=seatd.service network-online.target
+Wants=seatd.service network-online.target
 
 # Notes:
-#   - cage needs an active VT session to open the Wayland socket.
-#     seatd alone isn't enough — its VT-bound seat isn't activated
-#     until the system reaches graphical.target. Without waiting for
-#     graphical.target, cage fails with "Unable to open Wayland
-#     socket: Invalid argument" on every boot until retries
-#     eventually succeed minutes later.
-#   - The ExecStartPre sleep gives seatd/graphical a small buffer
-#     after the target is reached.
+#   - The ExecStartPre sleep gives seatd/VT time to become ready.
+#     Without it, cage may fail with "Unable to open Wayland socket:
+#     Invalid argument" on early boot when the VT session isn't active.
+#   - Do NOT add After/Wants=graphical.target here. On systems where
+#     the default target is multi-user.target, that creates a cycle:
+#     multi-user.target → rpi-infodisplay → graphical.target → multi-user
+#     systemd breaks the cycle by deleting the graphical.target job,
+#     and the service never starts (deadlock).
 
 [Service]
 Type=simple
