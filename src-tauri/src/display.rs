@@ -156,6 +156,33 @@ pub async fn power_on() {
     }
 }
 
+/// Power the display off for vacation mode.
+///
+/// Unlike regular power_off, this NEVER stops the service — the Pi must keep
+/// running to listen for the vacation mode toggle. If CEC is available, send
+/// standby (same as power_off). If not, we can't blank the display without
+/// stopping cage, so just log a warning.
+pub async fn power_off_vacation() {
+    if !CEC_PROBED.load(Ordering::Relaxed) {
+        for _ in 0..50 {
+            if CEC_PROBED.load(Ordering::Relaxed) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    if CEC_AVAILABLE.load(Ordering::Relaxed) {
+        log::info!("[display/vacation] CEC available — sending standby, keeping service alive");
+        cec_standby().await;
+    } else {
+        log::warn!(
+            "[display/vacation] CEC not available — cannot blank display without stopping service.\
+             Display will remain on until CEC or manual power-off."
+        );
+    }
+}
+
 pub async fn power_off() {
     // Give the CEC probe a moment to complete (it was started in init())
     if !CEC_PROBED.load(Ordering::Relaxed) {
@@ -197,7 +224,7 @@ pub async fn power_off() {
 /// the config-based schedule. When the schedule says "off" it calls
 /// [`power_off`] (CEC standby if available, or service stop). When the
 /// schedule says "on" after being off it calls [`power_on`] (CEC wake).
-pub fn spawn_scheduler(schedule: Arc<RwLock<Option<DisplaySchedule>>>) {
+pub fn spawn_scheduler(schedule: Arc<RwLock<Option<DisplaySchedule>>>, vacation_mode: Arc<RwLock<bool>>) {
     tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(30));
         // First tick fires immediately.
@@ -205,10 +232,32 @@ pub fn spawn_scheduler(schedule: Arc<RwLock<Option<DisplaySchedule>>>) {
 
         // Track the last action so we don't spam standby/wake every tick
         let mut was_off = false;
+        // Track whether we've already powered off for vacation mode (one-shot)
+        let mut vacation_powered_off = false;
 
         loop {
             interval.tick().await;
 
+            // ── Vacation mode check (overrides schedule) ───────────────
+            let on_vacation = *vacation_mode.read().await;
+            if on_vacation {
+                if !vacation_powered_off {
+                    vacation_powered_off = true;
+                    was_off = true;
+                    power_off_vacation().await;
+                    log::info!("[display/vacation] Vacation mode active — display off, service stays running");
+                }
+                // Keep skipping the schedule while on vacation
+                continue;
+            }
+
+            // Vacation just ended — power on if schedule would want it
+            if vacation_powered_off {
+                vacation_powered_off = false;
+                // Re-read schedule below to decide whether to power on
+            }
+
+            // ── Normal schedule check ──────────────────────────────────
             let sched = schedule.read().await;
             if let Some(ref s) = *sched {
                 if !s.enabled {
@@ -231,9 +280,6 @@ pub fn spawn_scheduler(schedule: Arc<RwLock<Option<DisplaySchedule>>>) {
                         was_off = true;
                         drop(sched);
                         power_off().await;
-                        // If CEC is not available, power_off stops the service
-                        // and we never come back here. If CEC is available,
-                        // we return and keep checking.
                     }
                 } else if was_off {
                     was_off = false;

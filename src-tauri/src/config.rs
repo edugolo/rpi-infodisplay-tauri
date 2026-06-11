@@ -18,6 +18,11 @@ pub struct AppConfig {
     pub zoom_factor: Option<f64>,
     pub refresh_cron_expression: Option<String>,
     pub display_schedule: Option<DisplaySchedule>,
+    /// When true, the display stays powered off regardless of the schedule.
+    /// The Pi keeps running and listening for config updates.
+    /// Toggled remotely by the controller (vacation mode).
+    #[serde(default)]
+    pub vacation_mode: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -148,6 +153,13 @@ impl AppConfig {
                                 self.display_schedule = Some(new_val);
                                 changed = true;
                             }
+                        }
+                    }
+                    "vacationMode" | "vacation_mode" => {
+                        let new_val = value.as_bool();
+                        if self.vacation_mode != new_val {
+                            self.vacation_mode = new_val;
+                            changed = true;
                         }
                     }
                     _ => {} // ignore unknown fields

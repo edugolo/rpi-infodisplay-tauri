@@ -36,6 +36,7 @@ async fn main() {
             zoom_factor: None,
             refresh_cron_expression: None,
             display_schedule: None,
+            vacation_mode: None,
         }
     });
 
@@ -204,13 +205,15 @@ async fn main() {
             // Start display schedule if configured
             // Init display schedule + controller connection in async context
             let schedule_for_display = Arc::new(RwLock::new(None));
-            display::spawn_scheduler(schedule_for_display.clone());
+            let vacation_mode = Arc::new(RwLock::new(app_config.vacation_mode.unwrap_or(false)));
+            display::spawn_scheduler(schedule_for_display.clone(), vacation_mode.clone());
 
             let config_for_connect = config.clone();
             let system_info_for_connect = system_info.clone();
             let app_handle_for_connect = app_handle.clone();
             let config_path_for_connect = config_path.clone();
             let schedule_for_remote = schedule_for_display.clone();
+            let vacation_for_remote = vacation_mode.clone();
 
             tokio::spawn(async move {
                 // Read initial schedule value now that we're async
@@ -236,6 +239,7 @@ async fn main() {
                     config_path_for_connect,
                     device_info.clone(),
                     schedule_for_remote,
+                    vacation_for_remote,
                 )
                 .await;
             });
@@ -254,6 +258,7 @@ async fn connect_to_controller(
     config_path: PathBuf,
     device_info: Arc<RwLock<serde_json::Value>>,
     schedule_handle: Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>,
+    vacation_mode_handle: Arc<RwLock<bool>>,
 ) {
     let controller = config.read().await.controller.clone();
     if controller.is_empty() {
@@ -262,7 +267,7 @@ async fn connect_to_controller(
     }
 
     loop {
-        match try_connect(&config, &system_info, &app_handle, &config_path, &device_info, &schedule_handle).await {
+        match try_connect(&config, &system_info, &app_handle, &config_path, &device_info, &schedule_handle, &vacation_mode_handle).await {
             Ok(()) => break,
             Err(e) => {
                 log::error!("[controller] Connection failed: {}", e);
@@ -280,6 +285,7 @@ async fn try_connect(
     config_path: &PathBuf,
     device_info: &Arc<RwLock<serde_json::Value>>,
     schedule_handle: &Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>,
+    vacation_mode_handle: &Arc<RwLock<bool>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Get or create keys
     let (private_key_pem, public_key_pem) = keys::get_or_create_keys()?;
@@ -329,7 +335,7 @@ async fn try_connect(
         Ok(result) => {
             // Apply server config snapshot
             if let Some(remote_config) = result.get("config") {
-                apply_remote_config(config, remote_config, &config_path, app_handle, Some(schedule_handle)).await;
+                apply_remote_config(config, remote_config, &config_path, app_handle, Some(schedule_handle), Some(vacation_mode_handle)).await;
             }
 
             let status = result["status"].as_str().unwrap_or("pending");
@@ -343,6 +349,7 @@ async fn try_connect(
                     &config_path,
                     app_handle,
                     schedule_handle,
+                    vacation_mode_handle,
                 )
                 .await?;
             }
@@ -358,6 +365,7 @@ async fn try_connect(
                 device_info,
                 &system_info,
                 schedule_handle,
+                vacation_mode_handle,
             )
             .await?;
         }
@@ -371,6 +379,7 @@ async fn try_connect(
                 &config_path,
                 app_handle,
                 schedule_handle,
+                vacation_mode_handle,
             )
             .await?;
 
@@ -385,6 +394,7 @@ async fn try_connect(
                 device_info,
                 &system_info,
                 schedule_handle,
+                vacation_mode_handle,
             )
             .await?;
         }
@@ -402,6 +412,7 @@ async fn wait_for_adoption(
     config_path: &PathBuf,
     app_handle: &tauri::AppHandle,
     schedule_handle: &Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>,
+    vacation_mode_handle: &Arc<RwLock<bool>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
@@ -412,7 +423,7 @@ async fn wait_for_adoption(
                 if status != "pending" {
                     log::info!("[controller] Device adopted! Status: {}", status);
                     if let Some(remote_config) = result.get("config") {
-                        apply_remote_config(config, remote_config, config_path, app_handle, Some(schedule_handle)).await;
+                        apply_remote_config(config, remote_config, config_path, app_handle, Some(schedule_handle), Some(vacation_mode_handle)).await;
                     }
                     return Ok(());
                 }
@@ -436,6 +447,7 @@ async fn start_full_operation(
     _device_info: &Arc<RwLock<serde_json::Value>>,
     system_info: &serde_json::Value,
     schedule_handle: &Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>,
+    vacation_mode_handle: &Arc<RwLock<bool>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     log::info!("[controller] Starting full operation");
 
@@ -471,13 +483,15 @@ async fn start_full_operation(
         let path = poller_config_path.clone();
         let app = poller_app.clone();
         let sched = schedule_handle.clone();
+        let vm = vacation_mode_handle.clone();
         move |remote_config: serde_json::Value| {
             let cfg = cfg.clone();
             let path = path.clone();
             let app = app.clone();
             let sched = sched.clone();
+            let vm = vm.clone();
             tokio::spawn(async move {
-                apply_remote_config(&cfg, &remote_config, &path, &app, Some(&sched)).await;
+                apply_remote_config(&cfg, &remote_config, &path, &app, Some(&sched), Some(&vm)).await;
             });
         }
     };
@@ -554,13 +568,15 @@ async fn start_full_operation(
         let app = app_handle.clone();
         let handle = rt_handle.clone();
         let sched = schedule_handle.clone();
+        let vm = vacation_mode_handle.clone();
         move |remote_config: serde_json::Value| {
             let cfg = cfg.clone();
             let path = path.clone();
             let app = app.clone();
             let sched = sched.clone();
+            let vm = vm.clone();
             handle.spawn(async move {
-                apply_remote_config(&cfg, &remote_config, &path, &app, Some(&sched)).await;
+                apply_remote_config(&cfg, &remote_config, &path, &app, Some(&sched), Some(&vm)).await;
             });
         }
     };
@@ -611,6 +627,7 @@ async fn apply_remote_config(
     config_path: &PathBuf,
     app_handle: &tauri::AppHandle,
     schedule_handle: Option<&Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>>,
+    vacation_mode_handle: Option<&Arc<RwLock<bool>>>,
 ) {
     let mut cfg = config.write().await;
     let changed = cfg.apply_remote(remote_config);
@@ -629,6 +646,19 @@ async fn apply_remote_config(
                     sched.on.as_deref().unwrap_or("none"),
                     sched.off.as_deref().unwrap_or("none"),
                     sched.days
+                );
+            }
+        }
+
+        // Update vacation mode handle so the scheduler picks it up
+        if let Some(handle) = vacation_mode_handle {
+            let new_val = cfg.vacation_mode.unwrap_or(false);
+            let mut vm = handle.write().await;
+            if *vm != new_val {
+                *vm = new_val;
+                log::info!(
+                    "[controller] Vacation mode: {}",
+                    if new_val { "ON" } else { "OFF" }
                 );
             }
         }
