@@ -11,13 +11,11 @@
 #       --name "Hall A" --location "Floor 1" --controller "https://ctrl.example.com"'
 #
 # Display power management:
-#   - The app tries HDMI-CEC (via cec-ctl) first. If the TV supports CEC,
-#     it sends a Standby command to gracefully turn off the display.
-#   - If CEC is unavailable, the app stops its systemd service, which
-#     cleanly terminates cage + the Tauri process. The display goes dark.
-#   - A systemd start timer wakes the display on schedule (default:
-#     Mon–Fri 09:00). The app also sends a CEC Image View On on startup
-#     if CEC is available.
+#   - The app runs as a 24/7 systemd service. Its internal displaySchedule
+#     (from config.json) handles HDMI-CEC to turn the screen on/off at
+#     the configured times — no systemd timers needed.
+#   - On startup, the app sends IMAGE_VIEW_ON (wake) via CEC.
+#   - At the scheduled off-time, it sends STANDBY via CEC.
 #   - A backup stop timer runs 5 minutes after the off-time in case the
 #     app's self-shutdown fails.
 #
@@ -259,8 +257,18 @@ info "Installing systemd service..."
 cat > /etc/systemd/system/rpi-infodisplay.service << SERVICEEOF
 [Unit]
 Description=Edugo Kiosk Display (Tauri)
-After=seatd.service network-online.target
-Wants=seatd.service network-online.target
+After=seatd.service network-online.target graphical.target
+Wants=seatd.service network-online.target graphical.target
+
+# Notes:
+#   - cage needs an active VT session to open the Wayland socket.
+#     seatd alone isn't enough — its VT-bound seat isn't activated
+#     until the system reaches graphical.target. Without waiting for
+#     graphical.target, cage fails with "Unable to open Wayland
+#     socket: Invalid argument" on every boot until retries
+#     eventually succeed minutes later.
+#   - The ExecStartPre sleep gives seatd/graphical a small buffer
+#     after the target is reached.
 
 [Service]
 Type=simple
@@ -268,7 +276,7 @@ WorkingDirectory=${INSTALL_DIR}
 Environment=WEBKIT_DISABLE_DMABUF_RENDERER=1
 Environment=XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}
 Environment=WLR_LIBINPUT_NO_DEVICES=1
-ExecStartPre=/bin/sleep 3
+ExecStartPre=/bin/sleep 8
 ExecStart=/usr/bin/cage -d -- ${INSTALL_DIR}/rpi-infodisplay
 Restart=on-failure
 RestartSec=10
@@ -281,87 +289,19 @@ WantedBy=multi-user.target
 SERVICEEOF
 ok "Systemd service installed."
 
-# ── Step 5: Systemd timer units ──────────────────────────────────────────────
-#
-# The app has an internal scheduler that respects the config-based schedule
-# (which can be updated remotely). At the scheduled off-time, the app sends
-# CEC Standby (if available) and then calls "systemctl stop" on itself.
-#
-# The systemd timers below provide:
-#   a) A reliable wake-up at the scheduled on-time (the start timer).
-#   b) A backup shutdown 5 minutes after the off-time in case the app's
-#      self-shutdown didn't fire (e.g., the app crashed mid-day).
-
-# Parse HH:MM into a systemd OnCalendar weekday expression
-# Turns "09:00" into "Mon..Fri 09:00:00"
-on_hour="${SCHEDULE_ON%%:*}"
-on_min="${SCHEDULE_ON##*:}"
-off_hour="${SCHEDULE_OFF%%:*}"
-off_min="${SCHEDULE_OFF##*:}"
-
-# Backup stop timer: 5 minutes after the off-time
-backup_off_min=$((10#${off_min} + 5))
-backup_off_hour="${off_hour}"
-if [[ "${backup_off_min}" -ge 60 ]]; then
-    backup_off_min=$((backup_off_min - 60))
-    backup_off_hour=$((10#${off_hour} + 1))
-fi
-backup_off_min=$(printf "%02d" "${backup_off_min}")
-backup_off_hour=$(printf "%02d" "${backup_off_hour}")
-
-info "Installing systemd timer units..."
-
-# Start timer
-cat > /etc/systemd/system/rpi-infodisplay-start.timer << TIMEREOF
-[Unit]
-Description=Start rpi-infodisplay on schedule (weekdays)
-
-[Timer]
-OnCalendar=Mon..Fri ${on_hour}:${on_min}:00
-Persistent=true
-Unit=rpi-infodisplay.service
-
-[Install]
-WantedBy=timers.target
-TIMEREOF
-ok "Start timer: Mon..Fri ${on_hour}:${on_min}"
-
-# Stop service (one-shot, called by the stop timer)
-cat > /etc/systemd/system/rpi-infodisplay-stop.service << SERVICEEOF
-[Unit]
-Description=Stop rpi-infodisplay (backup for scheduled shutdown)
-
-# Also try CEC standby as a last-resort fallback, in case the app
-# was unable to send it before self-stopping.
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/systemctl stop rpi-infodisplay
-ExecStartPost=/usr/bin/cec-ctl --device /dev/cec0 --standby 2>/dev/null || true
-RemainAfterExit=no
-SERVICEEOF
-
-# Stop timer (backup, 5 minutes after scheduled off-time)
-cat > /etc/systemd/system/rpi-infodisplay-stop.timer << TIMEREOF
-[Unit]
-Description=Stop rpi-infodisplay on schedule (backup)
-
-[Timer]
-OnCalendar=Mon..Fri ${backup_off_hour}:${backup_off_min}:00
-
-[Install]
-WantedBy=timers.target
-TIMEREOF
-ok "Stop backup timer: Mon..Fri ${backup_off_hour}:${backup_off_min}"
-
-systemctl daemon-reload
-ok "Timer units installed."
-
-# ── Step 6: Enable services & timers ────────────────────────────────────────
+# ── Step 5: Enable service ───────────────────────────────────────────────────
 systemctl enable --now seatd.service 2>/dev/null || true
 systemctl enable rpi-infodisplay.service
-systemctl enable rpi-infodisplay-start.timer
-systemctl enable rpi-infodisplay-stop.timer
-ok "Services and timers enabled"
+ok "Service installed and enabled."
+
+# Remove any leftover timer units from previous installs
+for unit in rpi-infodisplay-start.timer rpi-infodisplay-stop.timer rpi-infodisplay-stop.service; do
+    if systemctl is-enabled --quiet "${unit}" 2>/dev/null; then
+        systemctl disable --now "${unit}" 2>/dev/null || true
+    fi
+    rm -f "/etc/systemd/system/${unit}"
+done
+systemctl daemon-reload
 
 # ── Step 7: Pre-warm CEC on first install ────────────────────────────────────
 if command -v cec-ctl &>/dev/null && [[ -c /dev/cec0 ]]; then
@@ -385,7 +325,7 @@ echo "  Logs:    journalctl -u rpi-infodisplay -f"
 echo "  Restart: sudo systemctl restart rpi-infodisplay"
 echo ""
 echo "  Display schedule: ${SCHEDULE_ON} – ${SCHEDULE_OFF} (weekdays)"
-echo "  Power control:    CEC (cec-ctl) → service stop"
+echo "  Power control:    CEC (app-controlled, no systemd timers)"
 echo ""
 echo -e "${YELLOW}  Reboot to activate: sudo reboot${NC}"
-echo ""
+echo ""  # ^ service runs 24/7; only the screen is scheduled via displaySchedule
