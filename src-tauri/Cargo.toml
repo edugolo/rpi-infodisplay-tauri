@@ -1,6 +1,6 @@
 [package]
 name = "rpi-infodisplay"
-version = "0.0.14"
+version = "0.0.19"
 description = "Raspberry Pi kiosk display application (Tauri v2)"
 authors = ["Edugo Scholengroep"]
 edition = "2021"

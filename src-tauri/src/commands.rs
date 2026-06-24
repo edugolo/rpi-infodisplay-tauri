@@ -94,7 +94,10 @@ async fn apply_update(install_dir: &std::path::Path, downloaded: &std::path::Pat
         log::info!("[update] Backed up current binary to {:?}", backup);
     }
 
-    // Replace with new binary
+    // Remove existing binary (required when updating a running executable —
+    // trying to copy over a running binary causes ETXTBUSY "Text file busy")
+    let _ = tokio::fs::remove_file(&target).await;
+    // Copy new binary into place
     tokio::fs::copy(downloaded, &target).await?;
     tokio::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).await?;
     log::info!("[update] Replaced binary at {:?}", target);
