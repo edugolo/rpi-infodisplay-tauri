@@ -6,6 +6,7 @@ pub mod heartbeat;
 pub mod info_overlay;
 pub mod keys;
 pub mod poller;
+pub mod refresh;
 pub mod signing;
 pub mod socket;
 pub mod system_info;

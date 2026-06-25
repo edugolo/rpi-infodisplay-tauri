@@ -1,6 +1,6 @@
 [package]
 name = "rpi-infodisplay"
-version = "0.0.19"
+version = "0.0.20"
 description = "Raspberry Pi kiosk display application (Tauri v2)"
 authors = ["Edugo Scholengroep"]
 edition = "2021"
@@ -26,4 +26,5 @@ log = "0.4"
 env_logger = "0.11"
 dirs = "5"
 chrono = "0.4"
+cron = "0.16"
 url = "2"

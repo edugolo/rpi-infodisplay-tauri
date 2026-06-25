@@ -208,6 +208,16 @@ async fn main() {
             let vacation_mode = Arc::new(RwLock::new(app_config.vacation_mode.unwrap_or(false)));
             display::spawn_scheduler(schedule_for_display.clone(), vacation_mode.clone());
 
+            // Start cron-driven page refresh scheduler. Runs in the tokio
+            // runtime, so it fires even while the screen is off / CEC standby
+            // (which doesn't stop the app). Reuses the same reload as the
+            // manual "refresh" command.
+            let refresh_cron = Arc::new(RwLock::new(app_config.refresh_cron_expression.clone()));
+            rpi_infodisplay::refresh::spawn_refresh_scheduler(
+                refresh_cron.clone(),
+                app_handle.clone(),
+            );
+
             // Start background update checker (checks GitHub every 6 hours)
             rpi_infodisplay::commands::spawn_update_checker(
                 std::path::PathBuf::from("/opt/rpi-infodisplay"),
@@ -219,6 +229,7 @@ async fn main() {
             let config_path_for_connect = config_path.clone();
             let schedule_for_remote = schedule_for_display.clone();
             let vacation_for_remote = vacation_mode.clone();
+            let refresh_cron_for_remote = refresh_cron.clone();
 
             tokio::spawn(async move {
                 // Read initial schedule value now that we're async
@@ -245,6 +256,7 @@ async fn main() {
                     device_info.clone(),
                     schedule_for_remote,
                     vacation_for_remote,
+                    refresh_cron_for_remote,
                 )
                 .await;
             });
@@ -264,6 +276,7 @@ async fn connect_to_controller(
     device_info: Arc<RwLock<serde_json::Value>>,
     schedule_handle: Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>,
     vacation_mode_handle: Arc<RwLock<bool>>,
+    refresh_cron_handle: Arc<RwLock<Option<String>>>,
 ) {
     let controller = config.read().await.controller.clone();
     if controller.is_empty() {
@@ -272,7 +285,7 @@ async fn connect_to_controller(
     }
 
     loop {
-        match try_connect(&config, &system_info, &app_handle, &config_path, &device_info, &schedule_handle, &vacation_mode_handle).await {
+        match try_connect(&config, &system_info, &app_handle, &config_path, &device_info, &schedule_handle, &vacation_mode_handle, &refresh_cron_handle).await {
             Ok(()) => break,
             Err(e) => {
                 log::error!("[controller] Connection failed: {}", e);
@@ -291,6 +304,7 @@ async fn try_connect(
     device_info: &Arc<RwLock<serde_json::Value>>,
     schedule_handle: &Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>,
     vacation_mode_handle: &Arc<RwLock<bool>>,
+    refresh_cron_handle: &Arc<RwLock<Option<String>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Get or create keys
     let (private_key_pem, public_key_pem) = keys::get_or_create_keys()?;
@@ -340,7 +354,7 @@ async fn try_connect(
         Ok(result) => {
             // Apply server config snapshot
             if let Some(remote_config) = result.get("config") {
-                apply_remote_config(config, remote_config, &config_path, app_handle, Some(schedule_handle), Some(vacation_mode_handle)).await;
+                apply_remote_config(config, remote_config, &config_path, app_handle, Some(schedule_handle), Some(vacation_mode_handle), Some(refresh_cron_handle)).await;
             }
 
             let status = result["status"].as_str().unwrap_or("pending");
@@ -355,6 +369,7 @@ async fn try_connect(
                     app_handle,
                     schedule_handle,
                     vacation_mode_handle,
+                    refresh_cron_handle,
                 )
                 .await?;
             }
@@ -371,6 +386,7 @@ async fn try_connect(
                 &system_info,
                 schedule_handle,
                 vacation_mode_handle,
+                refresh_cron_handle,
             )
             .await?;
         }
@@ -385,6 +401,7 @@ async fn try_connect(
                 app_handle,
                 schedule_handle,
                 vacation_mode_handle,
+                refresh_cron_handle,
             )
             .await?;
 
@@ -400,6 +417,7 @@ async fn try_connect(
                 &system_info,
                 schedule_handle,
                 vacation_mode_handle,
+                refresh_cron_handle,
             )
             .await?;
         }
@@ -418,6 +436,7 @@ async fn wait_for_adoption(
     app_handle: &tauri::AppHandle,
     schedule_handle: &Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>,
     vacation_mode_handle: &Arc<RwLock<bool>>,
+    refresh_cron_handle: &Arc<RwLock<Option<String>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
@@ -428,7 +447,7 @@ async fn wait_for_adoption(
                 if status != "pending" {
                     log::info!("[controller] Device adopted! Status: {}", status);
                     if let Some(remote_config) = result.get("config") {
-                        apply_remote_config(config, remote_config, config_path, app_handle, Some(schedule_handle), Some(vacation_mode_handle)).await;
+                        apply_remote_config(config, remote_config, config_path, app_handle, Some(schedule_handle), Some(vacation_mode_handle), Some(refresh_cron_handle)).await;
                     }
                     return Ok(());
                 }
@@ -453,6 +472,7 @@ async fn start_full_operation(
     system_info: &serde_json::Value,
     schedule_handle: &Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>,
     vacation_mode_handle: &Arc<RwLock<bool>>,
+    refresh_cron_handle: &Arc<RwLock<Option<String>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     log::info!("[controller] Starting full operation");
 
@@ -489,14 +509,16 @@ async fn start_full_operation(
         let app = poller_app.clone();
         let sched = schedule_handle.clone();
         let vm = vacation_mode_handle.clone();
+        let rc = refresh_cron_handle.clone();
         move |remote_config: serde_json::Value| {
             let cfg = cfg.clone();
             let path = path.clone();
             let app = app.clone();
             let sched = sched.clone();
             let vm = vm.clone();
+            let rc = rc.clone();
             tokio::spawn(async move {
-                apply_remote_config(&cfg, &remote_config, &path, &app, Some(&sched), Some(&vm)).await;
+                apply_remote_config(&cfg, &remote_config, &path, &app, Some(&sched), Some(&vm), Some(&rc)).await;
             });
         }
     };
@@ -572,14 +594,16 @@ async fn start_full_operation(
         let handle = rt_handle.clone();
         let sched = schedule_handle.clone();
         let vm = vacation_mode_handle.clone();
+        let rc = refresh_cron_handle.clone();
         move |remote_config: serde_json::Value| {
             let cfg = cfg.clone();
             let path = path.clone();
             let app = app.clone();
             let sched = sched.clone();
             let vm = vm.clone();
+            let rc = rc.clone();
             handle.spawn(async move {
-                apply_remote_config(&cfg, &remote_config, &path, &app, Some(&sched), Some(&vm)).await;
+                apply_remote_config(&cfg, &remote_config, &path, &app, Some(&sched), Some(&vm), Some(&rc)).await;
             });
         }
     };
@@ -631,6 +655,7 @@ async fn apply_remote_config(
     app_handle: &tauri::AppHandle,
     schedule_handle: Option<&Arc<RwLock<Option<rpi_infodisplay::config::DisplaySchedule>>>>,
     vacation_mode_handle: Option<&Arc<RwLock<bool>>>,
+    refresh_cron_handle: Option<&Arc<RwLock<Option<String>>>>,
 ) {
     let mut cfg = config.write().await;
     let changed = cfg.apply_remote(remote_config);
@@ -662,6 +687,18 @@ async fn apply_remote_config(
                 log::info!(
                     "[controller] Vacation mode: {}",
                     if new_val { "ON" } else { "OFF" }
+                );
+            }
+        }
+
+        // Update the refresh-cron handle so the refresh scheduler picks it up
+        if let Some(handle) = refresh_cron_handle {
+            let mut rc = handle.write().await;
+            if *rc != cfg.refresh_cron_expression {
+                *rc = cfg.refresh_cron_expression.clone();
+                log::info!(
+                    "[controller] Refresh cron updated: {}",
+                    cfg.refresh_cron_expression.as_deref().unwrap_or("(disabled)")
                 );
             }
         }

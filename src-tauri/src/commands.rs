@@ -170,6 +170,18 @@ pub struct CommandDispatcher {
     info_fn: RwLock<Option<InfoFn>>,
 }
 
+/// Reload the main webview — the single source of truth for a "refresh".
+///
+/// Used by the manual `refresh` command (kiosk management panel) and by the
+/// cron-driven refresh scheduler. Re-running the page re-executes its server
+/// `load`, so e.g. a `CURRENT_DATE` query drops stale rows at midnight.
+pub async fn refresh_display(app_handle: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(webview) = app_handle.get_webview_window("main") {
+        webview.eval("location.reload()")?;
+    }
+    Ok(())
+}
+
 impl CommandDispatcher {
     pub fn new(
         config: Arc<RwLock<crate::config::AppConfig>>,
@@ -275,10 +287,7 @@ impl CommandDispatcher {
     }
 
     async fn cmd_refresh(&self, app_handle: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(webview) = app_handle.get_webview_window("main") {
-            webview.eval("location.reload()")?;
-        }
-        Ok(())
+        refresh_display(app_handle).await
     }
 
     async fn cmd_navigate(&self, payload: &Value, app_handle: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
